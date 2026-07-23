@@ -2,10 +2,29 @@ import * as Haptics from 'expo-haptics';
 import { Stack, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import Animated, { FadeIn, FadeInDown, FadeOut, useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
+import Animated, {
+  FadeIn,
+  FadeInDown,
+  FadeOut,
+  useAnimatedProps,
+  useSharedValue,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle, Defs, RadialGradient, Stop } from 'react-native-svg';
 import { color, font, radius, space, type } from '../src/theme/tokens';
+
+const AnimatedCircle = Animated.createAnimatedComponent(Circle);
+
+// Fixed SVG canvas — every ring's radius is capped well inside it, so at peak inhale
+// nothing can ever paint past its container (the previous transform:scale approach let
+// the halo balloon to 396px inside a 320px box, overlapping the text above and below it).
+const ORB_CANVAS = 300;
+const ORB_CENTER = ORB_CANVAS / 2;
+const WASH_R = { min: 95, max: 140 };
+const HALO_R = { min: 78, max: 118 };
+const CORE_R = { min: 58, max: 95 };
+const WASH_OPACITY = { min: 0.1, max: 0.22 };
+const HALO_OPACITY = { min: 0.22, max: 0.4 };
 
 /** Matches the visual character of Easing.inOut(Easing.sin) without depending on
  * reanimated's UI-thread callback scheduling, which the phase clock below avoids entirely. */
@@ -152,12 +171,16 @@ export default function BreatheScreen() {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
   };
 
-  const orbStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: 0.7 + breath.value * 0.52 }],
+  const washProps = useAnimatedProps(() => ({
+    r: WASH_R.min + (WASH_R.max - WASH_R.min) * breath.value,
+    fillOpacity: WASH_OPACITY.min + (WASH_OPACITY.max - WASH_OPACITY.min) * breath.value,
   }));
-  const haloStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: 0.82 + breath.value * 0.42 }],
-    opacity: 0.22 + breath.value * 0.26,
+  const haloProps = useAnimatedProps(() => ({
+    r: HALO_R.min + (HALO_R.max - HALO_R.min) * breath.value,
+    fillOpacity: HALO_OPACITY.min + (HALO_OPACITY.max - HALO_OPACITY.min) * breath.value,
+  }));
+  const coreProps = useAnimatedProps(() => ({
+    r: CORE_R.min + (CORE_R.max - CORE_R.min) * breath.value,
   }));
 
   return (
@@ -207,18 +230,45 @@ export default function BreatheScreen() {
           </Text>
 
           <View style={styles.orbWrap}>
-            <Animated.View style={[styles.halo, haloStyle]} />
-            <Animated.View style={[styles.orbOuter, orbStyle]}>
-              <Svg width={220} height={220} viewBox="0 0 220 220">
-                <Defs>
-                  <RadialGradient id="orbGrad" cx="36%" cy="30%" r="78%">
-                    <Stop offset="0%" stopColor={color.greenMid} stopOpacity={1} />
-                    <Stop offset="100%" stopColor={color.greenDeep} stopOpacity={1} />
-                  </RadialGradient>
-                </Defs>
-                <Circle cx={110} cy={110} r={105} fill="url(#orbGrad)" />
-              </Svg>
-            </Animated.View>
+            <Svg width={ORB_CANVAS} height={ORB_CANVAS} viewBox={`0 0 ${ORB_CANVAS} ${ORB_CANVAS}`}>
+              <Defs>
+                <RadialGradient id="washGrad" cx="50%" cy="50%" r="50%">
+                  <Stop offset="0%" stopColor={color.greenMid} stopOpacity={1} />
+                  <Stop offset="100%" stopColor={color.greenMid} stopOpacity={0} />
+                </RadialGradient>
+                <RadialGradient id="haloGrad" cx="50%" cy="50%" r="50%">
+                  <Stop offset="0%" stopColor={color.greenMid} stopOpacity={1} />
+                  <Stop offset="100%" stopColor={color.greenMid} stopOpacity={0} />
+                </RadialGradient>
+                <RadialGradient id="orbGrad" cx="36%" cy="30%" r="78%">
+                  <Stop offset="0%" stopColor={color.greenMid} stopOpacity={1} />
+                  <Stop offset="100%" stopColor={color.greenDeep} stopOpacity={1} />
+                </RadialGradient>
+              </Defs>
+              <AnimatedCircle
+                cx={ORB_CENTER}
+                cy={ORB_CENTER}
+                r={WASH_R.min}
+                fill="url(#washGrad)"
+                fillOpacity={WASH_OPACITY.min}
+                animatedProps={washProps}
+              />
+              <AnimatedCircle
+                cx={ORB_CENTER}
+                cy={ORB_CENTER}
+                r={HALO_R.min}
+                fill="url(#haloGrad)"
+                fillOpacity={HALO_OPACITY.min}
+                animatedProps={haloProps}
+              />
+              <AnimatedCircle
+                cx={ORB_CENTER}
+                cy={ORB_CENTER}
+                r={CORE_R.min}
+                fill="url(#orbGrad)"
+                animatedProps={coreProps}
+              />
+            </Svg>
             <View style={styles.phaseLabelWrap} pointerEvents="none">
               <Animated.Text
                 key={phase}
@@ -328,32 +378,21 @@ const styles = StyleSheet.create({
   },
 
   orbWrap: {
-    width: 320,
-    height: 320,
+    width: ORB_CANVAS,
+    height: ORB_CANVAS,
     alignItems: 'center',
     justifyContent: 'center',
-    marginVertical: 24,
+    marginVertical: 32,
   },
-  halo: {
+  phaseLabelWrap: {
     position: 'absolute',
-    width: 320,
-    height: 320,
-    borderRadius: 160,
-    backgroundColor: 'rgba(46,125,79,0.35)',
-  },
-  orbOuter: {
-    width: 220,
-    height: 220,
-    borderRadius: 110,
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: color.greenMid,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.5,
-    shadowRadius: 30,
-    elevation: 12,
   },
-  phaseLabelWrap: { position: 'absolute', alignItems: 'center' },
   phaseLabel: { fontFamily: font.bold, fontSize: 24, color: color.paperOnDark, letterSpacing: -0.3 },
   phaseUrdu: { fontFamily: font.urdu, fontSize: 16, lineHeight: 34, color: 'rgba(242,238,227,0.75)' },
 
