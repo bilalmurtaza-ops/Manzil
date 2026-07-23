@@ -389,7 +389,15 @@ marksTotal must be ${marksTotal}. Use plain text only, no markdown symbols.`,
     { system: APP_CONTEXT, responseSchema: GRADE_SCHEMA, temperature: 0.4 },
   );
   try {
-    return JSON.parse(text) as AnswerGrade;
+    const parsed = JSON.parse(text) as AnswerGrade;
+    // Trust the caller's marksTotal (the model is asked for it but can drift) and clamp
+    // the award into [0, marksTotal] so the UI's marks/total ratio can never exceed 1 or go negative.
+    const awarded = Number(parsed.marksAwarded);
+    return {
+      ...parsed,
+      marksTotal,
+      marksAwarded: Math.min(Math.max(Number.isFinite(awarded) ? awarded : 0, 0), marksTotal),
+    };
   } catch {
     throw new GeminiError('Could not grade the answer. Take a clearer photo and retry.', 'parse');
   }

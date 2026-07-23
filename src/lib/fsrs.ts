@@ -17,6 +17,11 @@ const MULTIPLIER: Record<Rating, number> = {
 };
 
 const MAX_INTERVAL_DAYS = 60;
+// A lapse resets stability to this fixed relearning value (≈ due tomorrow) rather
+// than scaling the prior stability. Scaling was wrong: a mature card (stability >150
+// after a handful of good/easy reps) times 0.4 still exceeds MAX_INTERVAL_DAYS, so a
+// just-failed card would be rescheduled a full 60 days out instead of resurfacing soon.
+const LAPSE_STABILITY = 0.5;
 
 const addDaysISO = (days: number): string => {
   const d = new Date();
@@ -25,12 +30,14 @@ const addDaysISO = (days: number): string => {
 };
 
 export function reviewCard(card: Flashcard, rating: Rating): Flashcard {
+  // Cap growth at the max interval so stored stability stays bounded and a lapse
+  // always collapses to a short relearning step regardless of how mature the card was.
   const stability =
     rating === 'again'
-      ? Math.max(0.5, card.stability * MULTIPLIER.again)
-      : Math.max(1, card.stability * MULTIPLIER[rating]);
+      ? LAPSE_STABILITY
+      : Math.min(Math.max(1, card.stability * MULTIPLIER[rating]), MAX_INTERVAL_DAYS);
 
-  const interval = Math.min(Math.max(Math.round(stability), rating === 'again' ? 0 : 1), MAX_INTERVAL_DAYS);
+  const interval = Math.min(Math.max(Math.round(stability), 1), MAX_INTERVAL_DAYS);
 
   return {
     ...card,
