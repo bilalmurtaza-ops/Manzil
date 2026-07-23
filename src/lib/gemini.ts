@@ -1,4 +1,4 @@
-import { getSubject } from '../data/syllabus';
+import { getSubject, subjectsForProfile } from '../data/syllabus';
 import type { ChatMessage, StudentProfile } from './types';
 
 /**
@@ -33,6 +33,23 @@ import type { ChatMessage, StudentProfile } from './types';
 
 const VISION_CHAIN = ['gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite'];
 const TEXT_CHAIN = ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-3.5-flash'];
+
+/**
+ * gemini-3.5-flash defaults to unbounded internal "thinking" — measured 27.3s on a
+ * one-line chat prompt (287 thoughts tokens) vs 9.8s with thinkingBudget forced to 0.
+ * This was the dominant source of "sometimes takes forever to reply". Not every model
+ * accepts the override though: gemini-3.6-flash and gemini-3.5-flash-lite both hard-reject
+ * thinkingBudget:0 with a 400 (verified live), so it's applied per-model, not globally.
+ */
+const NO_ZERO_THINKING_MODELS = new Set(['gemini-3.6-flash', 'gemini-3.5-flash-lite']);
+
+/** Per-attempt request timeout, after which a hung call is treated as an 'api' failure
+ * so generateChain falls forward to the next model instead of hanging indefinitely —
+ * this was the root cause of replies that just never came back. Vision's last-resort
+ * Lite fallback is a documented ~114s on image+schema calls, so it needs real headroom;
+ * every text-chain model is fast, so a much shorter budget is enough there. */
+const TEXT_TIMEOUT_MS = 20_000;
+const VISION_TIMEOUT_MS = 140_000;
 
 /**
  * Sent as systemInstruction on every call so Gemini never has to infer who
@@ -75,6 +92,8 @@ interface GenerateOptions {
   maxOutputTokens?: number;
   /** Defaults to TEXT_CHAIN[0]. */
   model?: string;
+  /** Defaults to TEXT_TIMEOUT_MS; generateVision raises it to VISION_TIMEOUT_MS. */
+  timeoutMs?: number;
 }
 
 async function generate(
@@ -90,6 +109,7 @@ async function generate(
     generationConfig: {
       temperature: options.temperature ?? 0.6,
       maxOutputTokens: options.maxOutputTokens ?? 4096,
+      ...(NO_ZERO_THINKING_MODELS.has(model) ? {} : { thinkingConfig: { thinkingBudget: 0 } }),
       ...(options.responseSchema
         ? { responseMimeType: 'application/json', responseSchema: options.responseSchema }
         : {}),
@@ -99,18 +119,31 @@ async function generate(
     body.systemInstruction = { parts: [{ text: options.system }] };
   }
 
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? TEXT_TIMEOUT_MS);
+
   let res: Response;
   try {
     res = await fetch(`${endpointFor(model)}?key=${API_KEY}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      signal: controller.signal,
     });
-  } catch {
+  } catch (e) {
+    // A timed-out attempt is retryable (the model may just be slow right now) — an
+    // unreachable network is not. Distinguishing them means a single hung request
+    // no longer stalls the whole chain forever, which was the root cause of replies
+    // that silently never arrived.
+    if (e instanceof Error && e.name === 'AbortError') {
+      throw new GeminiError(`${model} took too long to respond.`, 'api');
+    }
     throw new GeminiError(
       'No internet connection. Your plan and saved content still work offline.',
       'offline',
     );
+  } finally {
+    clearTimeout(timer);
   }
 
   if (!res.ok) {
@@ -121,12 +154,19 @@ async function generate(
     throw new GeminiError(`AI request failed (${res.status}). Try again in a moment.`, 'api');
   }
 
-  const json = (await res.json()) as {
-    candidates?: { content?: { parts?: { text?: string }[] } }[];
-  };
-  const text = json.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('') ?? '';
-  if (!text) throw new GeminiError('AI returned an empty response. Try again.', 'api');
-  return text;
+  try {
+    const json = (await res.json()) as {
+      candidates?: { content?: { parts?: { text?: string }[] } }[];
+    };
+    const text = json.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('') ?? '';
+    if (!text) throw new Error('empty');
+    return text;
+  } catch {
+    // A malformed/truncated body (dropped connection mid-response, a safety block
+    // with no content parts, etc.) is exactly the kind of one-model hiccup the chain
+    // exists to route around — treat it as retryable rather than a hard crash.
+    throw new GeminiError('AI returned an unusable response.', 'api');
+  }
 }
 
 /**
@@ -162,17 +202,27 @@ const generateText = (
 const generateVision = (
   contents: { role: 'user' | 'model'; parts: Part[] }[],
   options: GenerateOptions = {},
-) => generateChain(VISION_CHAIN, contents, options);
+) => generateChain(VISION_CHAIN, contents, { timeoutMs: VISION_TIMEOUT_MS, ...options });
+
+const GROUP_LABEL: Record<StudentProfile['group'], string> = {
+  arts: 'Arts group',
+  'science-bio': 'Science group (Biology elective)',
+  'science-cs': 'Science group (Computer Science elective)',
+};
 
 function profileContext(profile: StudentProfile): string {
   const subject = (id: string) => getSubject(id)?.name ?? id;
   const weak = Object.entries(profile.confidence)
     .filter(([, v]) => v <= 2)
     .map(([id]) => subject(id));
+  const subjects = subjectsForProfile(profile.classLevel, profile.group).map((s) => s.name);
   return [
     `Student: ${profile.name}, Class ${profile.classLevel} (SSC ${profile.classLevel === '9' ? 'Part I' : 'Part II'}), ${
-      profile.group === 'arts' ? 'Arts group' : profile.group === 'science-bio' ? 'Science (Biology)' : 'Science (Computer Science)'
+      GROUP_LABEL[profile.group] ?? 'Science group'
     }, Punjab Board (${profile.boardId}).`,
+    subjects.length > 0
+      ? `Full subject list this year: ${subjects.join(', ')}. The elective track above is just one of these subjects, not the student's only one — never assume a vague question is about it specifically.`
+      : '',
     `Board exams start ${profile.examDate}. Daily study time: ${profile.dailyMinutes} minutes.`,
     weak.length > 0 ? `Self-rated weak subjects: ${weak.join(', ')}.` : '',
   ]
@@ -187,6 +237,8 @@ You are "Ustaad" (استاد), the personal AI tutor inside this app. ${profileC
 
 Rules:
 - Match the student's language. If they write in Urdu script reply in Urdu; if Roman Urdu, reply in Roman Urdu; if English, reply in simple English. Mixing Urdu terms into English answers is encouraged — that is how Pakistani teachers actually talk.
+- Do not open with a greeting (no "Assalam o Alaikum", "Salam", etc.) unless the student's own message contains one — only then may you briefly return it. Otherwise start straight with the answer.
+- The subject list in the context above is background only, not a hint about what this message is about. If the student's question doesn't name or clearly imply a subject or chapter, ask which one they mean instead of guessing — never default to their elective track just because it was mentioned.
 - You know the PCTB (Punjab Textbook Board) syllabus, board paper patterns and pairing schemes. Answers must match what earns marks in board exams: definitions, labelled points, solved steps.
 - When asked for a "board-style" or N-mark answer, produce exactly the structure an examiner rewards: numbered points for long questions, 2-3 crisp lines for short questions.
 - Be warm and encouraging like a favourite teacher, never preachy. Keep answers tight; expand only when asked.
