@@ -1,0 +1,49 @@
+{
+  "expo": {
+    "name": "Manzil",
+    "slug": "manzil",
+    "version": "1.0.0",
+    "scheme": "manzil",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#FAF7F0",
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#0E1B12",
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 180
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "pk.manzil.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#0E1B12",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "560f1f59-8ae0-4104-8841-ac803f310787"
+      }
+    },
+    "owner": "alfredunounos-team"
+  }
+}

@@ -1,0 +1,100 @@
+import { subjectsForProfile, type Chapter, type Subject } from '../data/syllabus';
+import type { QuizAttempt, StudentProfile, StudyPlan } from './types';
+
+/**
+ * Readiness model: blends plan completion (coverage) with quiz performance
+ * (mastery), both weighted by each chapter's board-exam weight from the
+ * pairing scheme. Everything is computed locally and updates live.
+ */
+
+export interface ChapterReadiness {
+  chapter: Chapter;
+  subject: Subject;
+  /** 0..1 — study sessions completed for this chapter */
+  coverage: number;
+  /** 0..1 or null when never quizzed */
+  mastery: number | null;
+  /** 0..1 combined */
+  score: number;
+  /** exam weight 1..5 */
+  weight: number;
+}
+
+export interface SubjectReadiness {
+  subject: Subject;
+  score: number;
+  chapters: ChapterReadiness[];
+}
+
+export interface Readiness {
+  overall: number;
+  gradeBand: string;
+  gradeNote: string;
+  subjects: SubjectReadiness[];
+  /** Highest-risk chapters: heavy weight, low score. */
+  riskChapters: ChapterReadiness[];
+}
+
+export function computeReadiness(
+  profile: StudentProfile,
+  plan: StudyPlan | null,
+  attempts: QuizAttempt[],
+): Readiness {
+  const subjects = subjectsForProfile(profile.classLevel, profile.group);
+  const subjectResults: SubjectReadiness[] = [];
+
+  for (const subject of subjects) {
+    const chapters = subject.chapters[profile.classLevel].filter((c) => c.weight >= 2);
+    const chapterResults: ChapterReadiness[] = [];
+
+    for (const chapter of chapters) {
+      const sessions =
+        plan?.sessions.filter(
+          (s) => s.subjectId === subject.id && s.chapterId === chapter.id && s.kind !== 'practice',
+        ) ?? [];
+      const doneMinutes = sessions.filter((s) => s.done).reduce((a, s) => a + s.minutes, 0);
+      const totalMinutes = sessions.reduce((a, s) => a + s.minutes, 0);
+      const coverage = totalMinutes > 0 ? doneMinutes / totalMinutes : 0;
+
+      const chapterAttempts = attempts.filter((a) => a.chapterId === chapter.id);
+      const mastery =
+        chapterAttempts.length > 0
+          ? Math.max(...chapterAttempts.map((a) => a.correct / Math.max(a.total, 1)))
+          : null;
+
+      // Blend: quizzes count once they exist; otherwise coverage carries,
+      // discounted so untested chapters never look fully ready.
+      const score = mastery !== null ? 0.45 * coverage + 0.55 * mastery : coverage * 0.75;
+
+      chapterResults.push({ chapter, subject, coverage, mastery, score, weight: chapter.weight });
+    }
+
+    const weightSum = chapterResults.reduce((a, c) => a + c.weight, 0) || 1;
+    const score = chapterResults.reduce((a, c) => a + c.score * c.weight, 0) / weightSum;
+    subjectResults.push({ subject, score, chapters: chapterResults });
+  }
+
+  const overall =
+    subjectResults.length > 0
+      ? subjectResults.reduce((a, s) => a + s.score, 0) / subjectResults.length
+      : 0;
+
+  const [gradeBand, gradeNote] = gradeFor(overall);
+
+  const riskChapters = subjectResults
+    .flatMap((s) => s.chapters)
+    .filter((c) => c.weight >= 4)
+    .sort((a, b) => a.score * a.weight - b.score * b.weight || b.weight - a.weight)
+    .slice(0, 6);
+
+  return { overall, gradeBand, gradeNote, subjects: subjectResults, riskChapters };
+}
+
+function gradeFor(overall: number): [string, string] {
+  if (overall >= 0.85) return ['A+', 'On track for a top result — keep the edge sharp.'];
+  if (overall >= 0.7) return ['A', 'Strong trajectory. Push the risk chapters to reach A+.'];
+  if (overall >= 0.55) return ['B', 'Solid base. Consistency now decides your grade.'];
+  if (overall >= 0.4) return ['C', 'The plan works if you work it — focus on heavy chapters.'];
+  if (overall >= 0.2) return ['D', 'Early days. Every session from today moves this needle.'];
+  return ['—', 'Complete sessions and quizzes to unlock your prediction.'];
+}
