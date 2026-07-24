@@ -43,6 +43,21 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      # Cache ONLY downloaded third-party Gradle libraries + the wrapper — never
+      # compiled task outputs, the build cache, or the JS bundle. Every build still
+      # re-bundles our source with Metro and recompiles from scratch, so our bug
+      # fixes are ALWAYS fully applied; this only skips re-downloading unchanged
+      # dependencies. Keyed on package-lock.json, so any dependency change refetches.
+      - name: Cache Gradle dependencies (downloads only)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches/modules-2
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-deps-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-deps-
+
       - name: Install dependencies
         run: npm ci # respects .npmrc (legacy-peer-deps=true)
 
