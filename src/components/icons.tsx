@@ -199,3 +199,28 @@ export function CheckIcon({ size = 16, color, strokeWidth = 2.4 }: IconProps) {
     </Svg>
   );
 }
+
+/** Geometric diamond with inner lines — Theorem Dojo / proof symbol */
+export function DojoIcon({ size = 22, color, strokeWidth = 1.8 }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      {/* Outer diamond */}
+      <Path
+        d="M12 3L21 12L12 21L3 12Z"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinejoin="round"
+      />
+      {/* Inner geometric lines representing proof steps */}
+      <Path
+        d="M12 3L12 21M3 12L21 12"
+        stroke={color}
+        strokeWidth={strokeWidth * 0.6}
+        strokeLinecap="round"
+        opacity={0.45}
+      />
+      {/* Small central dot */}
+      <Circle cx="12" cy="12" r="1.4" fill={color} />
+    </Svg>
+  );
+}

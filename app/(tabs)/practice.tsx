@@ -3,7 +3,7 @@ import { useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
-import { CameraIcon, ChevronIcon, PracticeIcon } from '../../src/components/icons';
+import { CameraIcon, ChevronIcon, DojoIcon, PracticeIcon } from '../../src/components/icons';
 import { Screen } from '../../src/components/Screen';
 import { subjectsForProfile } from '../../src/data/syllabus';
 import { todayISO } from '../../src/lib/planEngine';
@@ -63,6 +63,26 @@ export default function PracticeScreen() {
             </Text>
           </Pressable>
         </View>
+
+        {/* Theorem Dojo — full-width entry card */}
+        {profile && (
+          <Pressable
+            style={styles.dojoCard}
+            onPress={() => {
+              Haptics.selectionAsync();
+              router.push({ pathname: '/dojo', params: { classLevel: profile.classLevel } });
+            }}
+          >
+            <DojoIcon size={22} color={color.greenMid} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.dojoTitle}>Theorem Dojo · مسئلہ ڈوجو</Text>
+              <Text style={styles.dojoSub}>
+                Class {profile.classLevel} · {profile.classLevel === '10' ? '6 compulsory board theorems' : '4 proof results'} · tap-to-arrange proof puzzle
+              </Text>
+            </View>
+            <ChevronIcon size={15} color={color.inkFaint} />
+          </Pressable>
+        )}
 
         {/* Flashcards */}
         <Pressable
@@ -197,6 +217,20 @@ const styles = StyleSheet.create({
   },
   toolTitle: { fontFamily: font.semibold, fontSize: 15, marginTop: 8 },
   toolSub: { ...type.small, fontSize: 12 },
+
+  dojoCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: color.card,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: color.line,
+    padding: space.lg,
+    marginTop: 10,
+  },
+  dojoTitle: { fontFamily: font.semibold, fontSize: 15, color: color.ink },
+  dojoSub: { ...type.small, color: color.inkFaint, marginTop: 3 },
 
   reviewCard: {
     flexDirection: 'row',
