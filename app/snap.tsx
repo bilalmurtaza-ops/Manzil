@@ -44,13 +44,13 @@ export default function SnapScreen() {
   const capture = async (source: 'camera' | 'gallery') => {
     if (!profile || busy) return;
     setError(null);
-    const base64 = await pickImage(source);
-    if (!base64) return;
+    const picked = await pickImage(source);
+    if (!picked) return;
     setBusy(true);
     setCards(null);
     setSaved(false);
     try {
-      const result = await cardsFromImage(profile, base64);
+      const result = await cardsFromImage(profile, picked.base64, picked.mimeType);
       setTopic(result.topic);
       setCards(result.cards);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);

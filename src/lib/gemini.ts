@@ -252,6 +252,7 @@ export async function askUstaad(
   history: ChatMessage[],
   message: string,
   imageBase64?: string,
+  mimeType = 'image/jpeg',
 ): Promise<string> {
   const contents = [
     ...history.slice(-12).map((m) => ({
@@ -262,7 +263,7 @@ export async function askUstaad(
       role: 'user' as const,
       parts: [
         ...(imageBase64
-          ? [{ inline_data: { mime_type: 'image/jpeg', data: imageBase64 } }]
+          ? [{ inline_data: { mime_type: mimeType, data: imageBase64 } }]
           : []),
         { text: message },
       ] as Part[],
@@ -366,6 +367,7 @@ export async function gradeAnswer(
   imageBase64: string,
   subjectId: string,
   marksTotal: number,
+  mimeType = 'image/jpeg',
 ): Promise<AnswerGrade> {
   const subject = getSubject(subjectId);
   const text = await generateVision(
@@ -373,7 +375,7 @@ export async function gradeAnswer(
       {
         role: 'user',
         parts: [
-          { inline_data: { mime_type: 'image/jpeg', data: imageBase64 } },
+          { inline_data: { mime_type: mimeType, data: imageBase64 } },
           {
             text: `This photo shows a handwritten exam answer by a Punjab Board Class ${profile.classLevel} student in ${subject?.name ?? subjectId}. Grade it exactly like a BISE board examiner marking a ${marksTotal}-mark question:
 - Read the question if visible, otherwise infer it from the answer.
@@ -429,13 +431,14 @@ const CARDS_SCHEMA = {
 export async function cardsFromImage(
   profile: StudentProfile,
   imageBase64: string,
+  mimeType = 'image/jpeg',
 ): Promise<{ topic: string; cards: GeneratedCard[] }> {
   const text = await generateVision(
     [
       {
         role: 'user',
         parts: [
-          { inline_data: { mime_type: 'image/jpeg', data: imageBase64 } },
+          { inline_data: { mime_type: mimeType, data: imageBase64 } },
           {
             text: `This is a photo of a Pakistani matric (Class ${profile.classLevel}) textbook page or handwritten class notes. Extract the content that matters for board exams and turn it into 6-12 flashcards.
 - front: a short question or term (the kind boards ask as short questions/MCQs).

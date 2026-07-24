@@ -41,12 +41,12 @@ export default function GraderScreen() {
   const capture = async (source: 'camera' | 'gallery') => {
     if (!profile || !subjectId || busy) return;
     setError(null);
-    const base64 = await pickImage(source);
-    if (!base64) return;
+    const picked = await pickImage(source);
+    if (!picked) return;
     setBusy(true);
     setGrade(null);
     try {
-      const result = await gradeAnswer(profile, base64, subjectId, marks);
+      const result = await gradeAnswer(profile, picked.base64, subjectId, marks, picked.mimeType);
       setGrade(result);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e) {
