@@ -128,6 +128,18 @@ export function CameraIcon({ size = 22, color, strokeWidth = 1.8 }: IconProps) {
   );
 }
 
+/** Five-point star: motivation / inspiration */
+export function StarIcon({ size = 20, color }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path
+        d="M12 2.5L14.2 8.9L21 9.1L15.6 13.2L17.6 19.7L12 15.8L6.4 19.7L8.4 13.2L3 9.1L9.8 8.9Z"
+        fill={color}
+      />
+    </Svg>
+  );
+}
+
 /** Leaf with a center vein: calm / breathing */
 export function LeafIcon({ size = 20, color, strokeWidth = 1.8 }: IconProps) {
   return (

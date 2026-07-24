@@ -3,7 +3,7 @@ import { useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
-import { ChevronIcon, FlameIcon, LeafIcon } from '../../src/components/icons';
+import { ChevronIcon, FlameIcon, LeafIcon, StarIcon } from '../../src/components/icons';
 import { ProgressRing } from '../../src/components/ProgressRing';
 import { Screen } from '../../src/components/Screen';
 import { SessionCard } from '../../src/components/SessionCard';
@@ -108,6 +108,23 @@ export default function TodayScreen() {
           <ChevronIcon size={16} color={color.greenMid} />
         </Pressable>
 
+        <Pressable
+          style={styles.motivationCard}
+          onPress={() => {
+            Haptics.selectionAsync();
+            router.push('/motivation');
+          }}
+        >
+          <View style={styles.motivationIconWrap}>
+            <StarIcon size={17} color={color.gold} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.motivationTitle}>کلامِ اقبال</Text>
+            <Text style={styles.motivationSub}>A verse from Allama Iqbal to move you forward</Text>
+          </View>
+          <ChevronIcon size={16} color={color.gold} />
+        </Pressable>
+
         {repaired && (
           <Animated.View entering={FadeIn.delay(200)} style={styles.repairNote}>
             <Text style={styles.repairText}>
@@ -208,6 +225,26 @@ const styles = StyleSheet.create({
   },
   breatheTitle: { ...type.bodyMedium, color: color.greenDeep },
   breatheSub: { ...type.small, color: color.inkSoft, marginTop: 1 },
+
+  motivationCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: color.goldSoft,
+    borderRadius: radius.md,
+    padding: 14,
+    marginBottom: space.md,
+  },
+  motivationIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: color.card,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  motivationTitle: { fontFamily: font.urduBold, fontSize: 15, lineHeight: 30, color: color.ink },
+  motivationSub: { ...type.small, color: color.inkSoft, marginTop: 1 },
 
   repairNote: {
     backgroundColor: color.greenSoft,
