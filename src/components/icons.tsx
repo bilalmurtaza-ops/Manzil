@@ -140,6 +140,36 @@ export function StarIcon({ size = 20, color }: IconProps) {
   );
 }
 
+/** Microphone: voice input */
+export function MicIcon({ size = 22, color, strokeWidth = 1.8 }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path
+        d="M12 3.5a3 3 0 013 3v5.5a3 3 0 01-6 0V6.5a3 3 0 013-3z"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinejoin="round"
+      />
+      <Path
+        d="M6.5 11v.8a5.5 5.5 0 0011 0V11M12 17.3v3.2M9 20.5h6"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </Svg>
+  );
+}
+
+/** Filled rounded square: stop recording */
+export function StopIcon({ size = 18, color }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path d="M5 8.5A3.5 3.5 0 018.5 5h7A3.5 3.5 0 0119 8.5v7a3.5 3.5 0 01-3.5 3.5h-7A3.5 3.5 0 015 15.5v-7z" fill={color} />
+    </Svg>
+  );
+}
+
 /** Leaf with a center vein: calm / breathing */
 export function LeafIcon({ size = 20, color, strokeWidth = 1.8 }: IconProps) {
   return (
