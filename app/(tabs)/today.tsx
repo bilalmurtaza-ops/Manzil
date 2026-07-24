@@ -243,7 +243,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  motivationTitle: { fontFamily: font.urduBold, fontSize: 15, lineHeight: 30, color: color.ink },
+  motivationTitle: {
+    fontFamily: font.urduBold,
+    fontSize: 15.5,
+    lineHeight: 38,
+    paddingBottom: 4,
+    textAlign: 'left',
+    color: color.ink,
+  },
   motivationSub: { ...type.small, color: color.inkSoft, marginTop: 1 },
 
   repairNote: {

@@ -20,6 +20,13 @@ function shuffled<T>(arr: T[]): T[] {
   return a;
 }
 
+function getVerseFontSize(line: string): number {
+  if (line.length > 44) return 19;
+  if (line.length > 36) return 21;
+  if (line.length > 28) return 23;
+  return 24.5;
+}
+
 export default function MotivationScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -56,8 +63,18 @@ export default function MotivationScreen() {
           <Text style={styles.theme}>{couplet.theme}</Text>
           <View style={styles.rule} />
 
-          <Text style={styles.line}>{couplet.lines[0]}</Text>
-          <Text style={styles.line}>{couplet.lines[1]}</Text>
+          {couplet.lines.map((lineText, lineIdx) => {
+            const fs = getVerseFontSize(lineText);
+            const lh = Math.round(fs * 2.3);
+            return (
+              <Text
+                key={lineIdx}
+                style={[styles.line, { fontSize: fs, lineHeight: lh }]}
+              >
+                {lineText}
+              </Text>
+            );
+          })}
 
           <Text style={styles.poet}>؎ علامہ اقبالؔ</Text>
         </Animated.View>
@@ -75,12 +92,12 @@ export default function MotivationScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: color.inkWash, paddingHorizontal: space.xl },
+  root: { flex: 1, backgroundColor: color.inkWash, paddingHorizontal: space.lg },
   topBar: { alignItems: 'flex-end' },
   closeText: { fontSize: 22, color: 'rgba(242,238,227,0.55)', fontFamily: font.medium },
 
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  verseWrap: { alignItems: 'center', width: '100%' },
+  verseWrap: { alignItems: 'center', width: '100%', paddingHorizontal: space.xs },
 
   theme: {
     fontFamily: font.urdu,
@@ -88,6 +105,7 @@ const styles = StyleSheet.create({
     lineHeight: 38,
     color: color.gold,
     textAlign: 'center',
+    paddingHorizontal: space.md,
   },
   rule: {
     width: 44,
@@ -99,12 +117,11 @@ const styles = StyleSheet.create({
   },
   line: {
     fontFamily: font.urdu,
-    fontSize: 25,
-    lineHeight: 64,
     color: color.paperOnDark,
     textAlign: 'center',
     writingDirection: 'rtl',
-    paddingHorizontal: 4,
+    paddingHorizontal: 20,
+    paddingVertical: 4,
   },
   poet: {
     fontFamily: font.urdu,

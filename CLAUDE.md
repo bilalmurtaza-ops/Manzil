@@ -43,9 +43,9 @@ AI features need `EXPO_PUBLIC_GEMINI_API_KEY` in `.env` (free key: https://aistu
 
 ## Architecture
 
-**Routing** — expo-router, file-based in `app/`. `app/index.tsx` redirects to `/onboarding` or `/(tabs)/today` based on whether a profile exists (after store hydration). `app/(tabs)/` holds the 5 tabs (today, plan, practice, ustaad, progress) with a fully custom `_layout.tsx` tab bar. Full-screen flows (`focus`, `quiz`, `snap`, `grader`, `review`, `breathe`, `onboarding`) are top-level routes presented as modals/slides (`breathe` = box-breathing stress-relief tool, launched from Today).
+**Routing** — expo-router, file-based in `app/`. `app/index.tsx` redirects to `/onboarding` or `/(tabs)/today` based on whether a profile exists (after store hydration). `app/(tabs)/` holds the 5 tabs (today, plan, practice, ustaad, progress) with a fully custom `_layout.tsx` tab bar. Full-screen flows (`focus`, `quiz`, `snap`, `grader`, `review`, `breathe`, `dojo`, `settings`, `onboarding`) are top-level routes presented as modals/slides (`breathe` = box-breathing stress-relief tool, launched from Today; `dojo` = theorem proof puzzle, launched from Practice; `settings` = app preferences, vibration toggle, developer bio & interactive study profile editor, launched from top-right of Progress).
 
-**State** — single Zustand store `src/store/useAppStore.ts`, persisted to AsyncStorage. Holds `profile`, `plan`, `quizAttempts`, `flashcards`, `chatHistory`, `activeDays`. `hydrated` flag gates routing until persistence loads (`onRehydrateStorage`). `computeStreak()` lives here. All app data flows through this store — there is no other source of truth.
+**State** — single Zustand store `src/store/useAppStore.ts`, persisted to AsyncStorage. Holds `profile`, `plan`, `quizAttempts`, `flashcards`, `chatHistory`, `activeDays`, `vibrationEnabled`. `hydrated` flag gates routing until persistence loads (`onRehydrateStorage`). `computeStreak()` lives here. All app data flows through this store — there is no other source of truth.
 
 **The two load-bearing subsystems:**
 
@@ -58,6 +58,10 @@ AI features need `EXPO_PUBLIC_GEMINI_API_KEY` in `.env` (free key: https://aistu
 **Spaced repetition** (`src/lib/fsrs.ts`) — FSRS-lite, fully offline. `reviewCard(card, rating)` grows stability (capped at the 60-day max interval) → next `due` date. A lapse ('again') resets stability to a short relearning value (due tomorrow) regardless of prior maturity — never scale the old stability, which once left just-failed cards scheduled 60 days out. Review queue = cards with `due <= today`.
 
 **Readiness** (`src/lib/readiness.ts`) — `computeReadiness()` blends plan completion (coverage) with quiz mastery, weighted by chapter pairing-scheme weight → per-subject scores, predicted grade band, and `riskChapters` (heavy weight + thin prep). Powers the Progress tab.
+
+**Theorem Dojo** (`src/data/theorems.ts`, `app/dojo.tsx`) — 100% offline interactive proof puzzle targeting compulsory 8-mark board paper Q9. Dataset in `theorems.ts` contains 10 PCTB theorems (6 Class 10 Q9 theorems from Ch 9 & 12; 4 Class 9 SNC proof results from Ch 9 & 11). `dojo.tsx` implements a 3-phase flow: Read (Given/To Prove/Construction/Hint) → Arrange (tap-to-place shuffled statement+reason steps with undo) → Result (per-step feedback, score & readiness breakdown). Launched from Practice tab (`practice.tsx`) via `DojoIcon`.
+
+**Settings & Study Profile** (`app/settings.tsx`) — App preferences, developer bio (Bilal Murtaza), data management, and interactive Study Profile editor. Allows modifying Student Name, Class Level (Class 9 / Class 10), Study Group (Science Bio / Science CS / Arts), and BISE Board (all 9 Punjab boards in `src/data/boards.ts`). Changing Class Level or Study Group updates `profile` and immediately triggers `setPlan(generatePlan(newProfile))` to regenerate the calendar plan and subject datasets app-wide. Changing BISE Board updates `profile.boardId`, dynamically updating `APP_CONTEXT` for Ustaad AI on every prompt. Haptics toggle updates `vibrationEnabled` in store app-wide. Launched via top-right `SettingsIcon` on Progress tab (`progress.tsx`).
 
 ## Design system
 

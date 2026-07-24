@@ -1,7 +1,9 @@
+import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import { useMemo } from 'react';
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
+import { SettingsIcon } from '../../src/components/icons';
 import { ProgressRing } from '../../src/components/ProgressRing';
 import { Screen } from '../../src/components/Screen';
 import { daysUntil } from '../../src/lib/planEngine';
@@ -49,8 +51,24 @@ export default function ProgressScreen() {
         contentContainerStyle={{ paddingHorizontal: space.lg, paddingBottom: 32 }}
         showsVerticalScrollIndicator={false}
       >
-        <Text style={styles.urduAccent}>پیش رفت</Text>
-        <Text style={[type.title, { color: color.ink }]}>Progress</Text>
+        <View style={styles.headerRow}>
+          <View>
+            <Text style={styles.urduAccent}>پیش رفت</Text>
+            <Text style={[type.title, { color: color.ink }]}>Progress</Text>
+          </View>
+          <Pressable
+            style={styles.settingsBtn}
+            onPress={() => {
+              if (useAppStore.getState().vibrationEnabled !== false) {
+                Haptics.selectionAsync();
+              }
+              router.push('/settings' as any);
+            }}
+            hitSlop={12}
+          >
+            <SettingsIcon size={20} color={color.ink} />
+          </Pressable>
+        </View>
 
         {/* Overall readiness */}
         <Animated.View entering={FadeInDown.duration(400)} style={styles.heroCard}>
@@ -175,6 +193,24 @@ export default function ProgressScreen() {
 }
 
 const styles = StyleSheet.create({
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    marginBottom: space.xs,
+  },
+  settingsBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: color.card,
+    borderWidth: 1,
+    borderColor: color.line,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+
   urduAccent: { fontFamily: font.urdu, fontSize: 15, lineHeight: 36, color: color.greenMid },
 
   heroCard: {

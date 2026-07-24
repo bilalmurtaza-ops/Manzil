@@ -18,6 +18,8 @@ interface AppState {
   chatHistory: ChatMessage[];
   /** ISO dates (yyyy-mm-dd) on which at least one session was completed. */
   activeDays: string[];
+  /** App-wide haptic feedback / vibration preference. Default: true. */
+  vibrationEnabled: boolean;
 
   setProfile: (profile: StudentProfile) => void;
   setPlan: (plan: StudyPlan) => void;
@@ -28,6 +30,7 @@ interface AppState {
   deleteFlashcard: (cardId: string) => void;
   appendChat: (message: ChatMessage) => void;
   clearChat: () => void;
+  toggleVibration: () => void;
   resetAll: () => void;
 }
 
@@ -43,6 +46,7 @@ export const useAppStore = create<AppState>()(
       flashcards: [],
       chatHistory: [],
       activeDays: [],
+      vibrationEnabled: true,
 
       setProfile: (profile) => set({ profile }),
       setPlan: (plan) => set({ plan }),
@@ -87,6 +91,11 @@ export const useAppStore = create<AppState>()(
         })),
       clearChat: () => set({ chatHistory: [] }),
 
+      toggleVibration: () =>
+        set((s) => ({
+          vibrationEnabled: s.vibrationEnabled === false ? true : false,
+        })),
+
       resetAll: () =>
         set({
           profile: null,
@@ -95,6 +104,7 @@ export const useAppStore = create<AppState>()(
           flashcards: [],
           chatHistory: [],
           activeDays: [],
+          vibrationEnabled: true,
         }),
     }),
     {

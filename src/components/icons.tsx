@@ -224,3 +224,24 @@ export function DojoIcon({ size = 22, color, strokeWidth = 1.8 }: IconProps) {
     </Svg>
   );
 }
+
+/** Rare, bespoke precision dial/astrolabe settings icon — elegant mechanical precision lines */
+export function SettingsIcon({ size = 22, color, strokeWidth = 1.8 }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      {/* Outer precision ring */}
+      <Circle cx="12" cy="12" r="8.2" stroke={color} strokeWidth={strokeWidth} />
+      {/* Inner core ring */}
+      <Circle cx="12" cy="12" r="3.2" stroke={color} strokeWidth={strokeWidth} />
+      {/* 8 Radial precision notches */}
+      <Path
+        d="M12 2v2M12 20v2M2 12h2M20 12h2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+      />
+      {/* Central pivot dot */}
+      <Circle cx="12" cy="12" r="1.2" fill={color} />
+    </Svg>
+  );
+}
