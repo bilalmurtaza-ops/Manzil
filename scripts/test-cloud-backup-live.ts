@@ -112,9 +112,12 @@ async function main() {
 
   const dup = fresh();
   const signUpDup = await dup.auth.signUp(userA);
+  // This project's config (Confirm email OFF) returns an explicit error rather than
+  // an obfuscated null session — verified live. src/lib/cloudBackup.ts's signUp()
+  // handles both shapes, since Supabase's exact behavior here varies by config.
   check(
-    'duplicate signUp returns null session (already-registered obfuscation)',
-    !signUpDup.error && !signUpDup.data.session,
+    'duplicate signUp is rejected (either an explicit error, or a null session)',
+    !!signUpDup.error || !signUpDup.data.session,
     `error=${signUpDup.error?.message} session=${!!signUpDup.data.session}`,
   );
 

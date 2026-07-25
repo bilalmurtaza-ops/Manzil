@@ -82,15 +82,16 @@ export function mapSupabaseError(e: unknown): BackupError {
   }
 
   // fetch() network failure surfaces as a TypeError in both RN and browsers.
+  // These two messages are shown both for background backup attempts AND for
+  // direct user actions (sign in, sign up, password reset) — the "will retry
+  // automatically" framing only makes sense for the former, so the copy stays
+  // neutral rather than promising a retry that only the backup scheduler does.
   if (name === 'TypeError' || /network|failed to fetch|fetch failed/i.test(msg)) {
-    return new BackupError(
-      "You're offline. Your data is safe on this device — backup will retry automatically.",
-      'offline',
-    );
+    return new BackupError("You're offline. Your data is safe on this device.", 'offline');
   }
 
   if (status === 429 || /rate limit/i.test(msg)) {
-    return new BackupError('Too many requests just now. Backup will retry in a few minutes.', 'rate-limit');
+    return new BackupError('Too many requests just now. Try again in a few minutes.', 'rate-limit');
   }
 
   if (status === 401 || status === 403 || /jwt|invalid token|not authenticated|refresh token/i.test(msg)) {
@@ -156,12 +157,18 @@ export async function getSession(): Promise<CloudSession | null> {
 export async function signUp(email: string, password: string): Promise<CloudSession> {
   try {
     const { data, error } = await client().auth.signUp({ email: email.trim(), password });
-    if (error) throw mapSupabaseError(error);
 
-    // With "Confirm email" OFF, Supabase still returns an obfuscated user with a
-    // null session when the address is already registered — it deliberately does
-    // not reveal existing accounts. Without this branch the UI would look like a
-    // successful signup that mysteriously isn't signed in.
+    // Verified live against this project's config (Confirm email OFF): a duplicate
+    // signup throws an explicit error here rather than the obfuscated-null-session
+    // response some Supabase configs use. Handle both, so this holds even if the
+    // dashboard's email-confirmation setting changes later.
+    if (error) {
+      if (/already registered|already exists|user already/i.test(error.message)) {
+        throw new BackupError('That email is already registered. Sign in instead.', 'auth');
+      }
+      throw mapSupabaseError(error);
+    }
+
     if (!data.session) {
       throw new BackupError('That email is already registered. Sign in instead.', 'auth');
     }
