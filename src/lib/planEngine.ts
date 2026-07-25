@@ -41,12 +41,40 @@ export function daysUntil(dateISO: string): number {
   return Math.round(ms / 86_400_000);
 }
 
-/** Split minutes into blocks in [SESSION_MIN, blockMax], no tiny remainders. */
+/**
+ * Split minutes into blocks that each genuinely fit within [SESSION_MIN, blockMax].
+ *
+ * Uses ceil, not round: with round, a 100-minute chapter against a 45-minute
+ * blockMax produced 2 blocks of 50 — silently exceeding the cap it was given and
+ * making real sessions longer than the student's block size implies.
+ */
 function splitBlocks(total: number, blockMax: number = SESSION_MAX): number[] {
-  const t = Math.max(total, SESSION_MIN);
-  const count = Math.max(1, Math.round(t / blockMax));
-  const each = Math.round(t / count);
-  return Array.from({ length: count }, () => Math.max(SESSION_MIN, Math.min(each, 90)));
+  const cap = Math.max(SESSION_MIN, blockMax);
+  let rem = Math.max(total, SESSION_MIN);
+  const out: number[] = [];
+  // Emit whole-cap blocks so they tile a day exactly (a 60-minute day takes two
+  // 30s). Equal-sized splitting produced 4x25 for a 100-minute chapter, leaving a
+  // dead 10-minute gap at the end of every 60-minute day; folding the tail into
+  // the last block instead produced oversized blocks that tiled just as badly.
+  while (rem - cap >= SESSION_MIN) {
+    out.push(cap);
+    rem -= cap;
+  }
+  if (rem === cap) {
+    out.push(cap);
+    rem = 0;
+  }
+  if (rem > 0) {
+    // A tail longer than one block splits into two real sessions rather than
+    // becoming an over-length block.
+    if (rem > cap && rem >= 2 * SESSION_MIN) {
+      const half = Math.round(rem / 2);
+      out.push(half, rem - half);
+    } else {
+      out.push(rem);
+    }
+  }
+  return out;
 }
 
 let idCounter = 0;
@@ -75,44 +103,78 @@ function fillDays(
 
     const date = addDays(todayISO(), day);
     let left = dailyLoad;
-    const used = new Set<string>();
+    /** How many blocks each subject already has today — drives variety. */
+    const usedCount = new Map<string, number>();
+    // A long day must spread over more subjects. The flat cap of 3 was tuned when
+    // every day was ~90 minutes; at 240 min/day it forced 8+ consecutive blocks of
+    // the same subject once the three slots were taken.
+    const maxSubjectsToday = Math.max(
+      MAX_SUBJECTS_PER_DAY,
+      Math.min(queues.size, Math.ceil(dailyLoad / 45)),
+    );
 
     while (left >= SESSION_MIN) {
       // Subject with the most remaining work; prefer subjects not studied today.
+      // Candidates are ranked, but a block is only placed if it can be placed
+      // CLEANLY — either whole, or split so that both halves are still a real
+      // session. Preferring a subject whose head block fits outright keeps days
+      // full without ever overflowing the budget or emitting a 5-minute stub.
       let best: string | null = null;
       let bestScore = -1;
+      let bestFits = false;
       for (const [subjectId, queue] of queues) {
         if (queue.length === 0) continue;
-        if (!used.has(subjectId) && used.size >= MAX_SUBJECTS_PER_DAY) continue;
+        const times = usedCount.get(subjectId) ?? 0;
+        if (times === 0 && usedCount.size >= maxSubjectsToday) continue;
+        const head = queue[0].minutes;
+        const fits = head <= left;
+        // A split whose tail is too short to be a session is only safe when there
+        // is a following block to roll that tail into. On a subject's final block
+        // there isn't one, so skip it today and let another subject use the time —
+        // otherwise the plan ends up with 8- and 10-minute stub sessions.
+        if (!fits && head - left < SESSION_MIN && queue.length === 1) continue;
         const remaining = queue.reduce((a, b) => a + b.minutes, 0);
-        const score = remaining * (used.has(subjectId) ? 0.6 : 1);
-        if (score > bestScore) {
+        // Diminishing preference per repeat. A flat 0.6 penalty was too weak: a
+        // subject with far more remaining work still won every slot, stacking the
+        // same subject back-to-back all day.
+        const score = remaining / (1 + times * 1.5);
+        // A block that fits whole always beats one that would need splitting.
+        if (fits !== bestFits ? fits : score > bestScore) {
           bestScore = score;
           best = subjectId;
+          bestFits = fits;
         }
       }
       if (!best) break;
 
       const queue = queues.get(best)!;
       const block = queue[0];
-      // Take the whole block when it fits (with slight overflow tolerance),
-      // otherwise split it — but never leave a sub-SESSION_MIN sliver behind.
+      // The day's budget is a hard ceiling, never a suggestion. The previous
+      // `left + 10` tolerance plus sliver-absorption meant a student who chose
+      // 60 min/day got up to 78 — measured on 101 of 224 days. Content is never
+      // dropped: whatever doesn't fit stays at the head of the queue for tomorrow.
       let minutes: number;
-      if (block.minutes <= left + 10) {
+      if (block.minutes <= left) {
         minutes = block.minutes;
         queue.shift();
       } else {
         minutes = left;
         const rest = block.minutes - minutes;
-        if (rest < SESSION_MIN) {
-          minutes = block.minutes; // absorb the sliver into this session
-          queue.shift();
-        } else {
+        if (rest >= SESSION_MIN) {
           queue[0] = { ...block, minutes: rest };
+        } else {
+          // Too small to stand alone as tomorrow's session. Roll it into the next
+          // block rather than either emitting a 5-minute stub or dropping content.
+          queue.shift();
+          if (queue.length > 0) {
+            queue[0] = { ...queue[0], minutes: queue[0].minutes + rest };
+          } else {
+            queue.push({ ...block, minutes: rest });
+          }
         }
       }
       sessions.push({ id: nextId(), date, subjectId: best, chapterId: block.chapterId, kind, minutes, done: false });
-      used.add(best);
+      usedCount.set(best, (usedCount.get(best) ?? 0) + 1);
       left -= minutes;
     }
     day += 1;
@@ -146,19 +208,30 @@ export function generatePlan(profile: StudentProfile): StudyPlan {
   const practiceDays = Math.min(Math.max(Math.round(totalDays * 0.12), 2), 14);
   const practiceStart = totalDays - practiceDays;
 
-  // Fit the study pass into its window: compress when tight, spread when roomy.
+  // Compress content only when even a full-capacity first pass wouldn't fit in the
+  // study window; otherwise keep every chapter's full estimate.
   const studyCapacity = studyDaysTarget * capacity;
   const scale = Math.min(1, studyCapacity / Math.max(neededStudy, 1));
-  const studyDailyLoad = Math.max(
-    40,
-    Math.min(capacity, Math.ceil((neededStudy * scale) / studyDaysTarget)),
-  );
 
-  // Light days should still mix subjects: shrink blocks so ≥2 fit per day.
-  const blockMax =
-    studyDailyLoad < 2 * SESSION_MAX
-      ? Math.max(30, Math.floor(studyDailyLoad / 2))
-      : SESSION_MAX;
+  /**
+   * The student's stated daily time IS the daily target — it is not throttled.
+   *
+   * This used to be `min(capacity, neededStudy*scale / studyDaysTarget)`, which on
+   * a roomy runway collapsed to neededStudy/studyDaysTarget (~90 min for class 10)
+   * *independently of capacity*. Every student choosing 1.5h, 2h, 3h or 4h+ got a
+   * byte-identical 90-minute study phase for the first ~138 days. Daily time now
+   * decides how fast the first pass completes, and therefore how many revision
+   * cycles fit afterwards — which is what the onboarding copy promises.
+   */
+  const studyDailyLoad = capacity;
+
+  /**
+   * Two blocks per day minimum so subjects still interleave, but capped at
+   * SESSION_MAX so session COUNT grows with available time rather than session
+   * length. The old `floor(load/2)` with no upper clamp pinned every student at
+   * exactly 2 sessions/day no matter how much time they had.
+   */
+  const blockMax = Math.min(SESSION_MAX, Math.max(SESSION_MIN, Math.floor(studyDailyLoad / 2)));
 
   for (const subject of subjects) {
     const queue: Block[] = [];
@@ -184,12 +257,16 @@ export function generatePlan(profile: StudentProfile): StudyPlan {
       const chapters = [...subject.chapters[profile.classLevel]]
         .filter((c) => c.weight >= 2)
         .sort((a, b) => b.weight - a.weight);
+      // Continuous in confidence, so every rating step actually changes the plan.
+      // Was a binary `confidence <= 2 ? 0.45 : 0.3`, which made ratings 3, 4 and 5
+      // produce identical revision depth for the same chapter.
+      const reviseFactor = 0.25 + (5 - confidence) * 0.05; // 5→0.25 … 1→0.45
       const queue: Block[] = chapters.map((c) => ({
         subjectId: subject.id,
         chapterId: c.id,
         minutes: Math.max(
           SESSION_MIN,
-          Math.min(45, Math.round((chapterMinutes.get(c.id) ?? c.estMinutes) * (confidence <= 2 ? 0.45 : 0.3))),
+          Math.min(45, Math.round((chapterMinutes.get(c.id) ?? c.estMinutes) * reviseFactor)),
         ),
       }));
       if (queue.length > 0) queues.set(subject.id, queue);
@@ -197,11 +274,16 @@ export function generatePlan(profile: StudentProfile): StudyPlan {
     return queues;
   };
 
+  // Revision repeats until the practice phase starts. The old hard `cycles < 6`
+  // cap was safe only because the study pass was throttled to ~90 min/day and so
+  // consumed most of the runway; now that a high-capacity student finishes the
+  // first pass early, capping cycles would leave a long stretch of empty days.
+  // The no-progress guard (not a fixed count) is what makes this terminate.
   let cursor = afterStudy;
-  let cycles = 0;
-  while (cursor < practiceStart && cycles < 6) {
+  while (cursor < practiceStart) {
+    const before = sessions.length;
     cursor = fillDays(sessions, buildReviseQueues(), 'revise', cursor, practiceStart, capacity);
-    cycles += 1;
+    if (sessions.length === before) break; // nothing schedulable — avoid spinning
   }
 
   // ---- Practice phase: board-style drilling, rotating subjects daily.
