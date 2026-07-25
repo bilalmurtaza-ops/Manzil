@@ -138,10 +138,27 @@ async function generate(
     if (e instanceof Error && e.name === 'AbortError') {
       throw new GeminiError(`${model} took too long to respond.`, 'api');
     }
-    throw new GeminiError(
-      'No internet connection. Your plan and saved content still work offline.',
-      'offline',
+    const detail = e instanceof Error ? e.message : String(e);
+    // Only failures that actually look like lost connectivity get the reassuring
+    // 'offline' copy — and 'offline' is deliberately never retried across the model
+    // chain (see generateChain below), since a truly dead network won't fix itself
+    // by trying a different model. Everything else (a bad global patch, a malformed
+    // request, some other runtime hiccup) surfaces its real message as a retryable
+    // 'api' failure instead of being silently misreported as "no internet", which is
+    // exactly what once hid a real regression: react-native-url-polyfill clobbering
+    // RN 0.86's built-in URL implementation broke fetch() here, but every thrown
+    // error — regardless of actual cause — was getting bucketed into this generic
+    // offline message, so the true error was invisible until traced by hand.
+    const looksOffline = /network request failed|failed to fetch|net::err|enotfound|no internet/i.test(
+      detail,
     );
+    if (looksOffline) {
+      throw new GeminiError(
+        'No internet connection. Your plan and saved content still work offline.',
+        'offline',
+      );
+    }
+    throw new GeminiError(`Couldn't reach the AI service (${detail}).`, 'api');
   } finally {
     clearTimeout(timer);
   }

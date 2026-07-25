@@ -1,7 +1,22 @@
-// Must be first: supabase-js relies on a spec-complete URL/URLSearchParams, which
-// Hermes does not fully provide. Without this, calls can work on web and fail on
-// Android in ways that look like server errors.
-import 'react-native-url-polyfill/auto';
+/**
+ * Deliberately NOT using `react-native-url-polyfill` here.
+ *
+ * That package exists to patch React Native's old "homemade" URL/URLSearchParams
+ * shim, which used to throw errors like "URL.hostname is not implemented" on
+ * Hermes. Expo SDK 57 / React Native 0.86 replaced that shim with a correct,
+ * complete native implementation, so the polyfill is no longer needed here.
+ *
+ * Installing it anyway is actively harmful: `setupURLPolyfill()` unconditionally
+ * runs `globalThis.URL = <the polyfill's own reimplementation>`, which DOWNGRADES
+ * RN 0.86's new built-in URL to a years-old third-party class that predates and
+ * was never tested against RN 0.86's networking internals — globally, for every
+ * fetch in the app, not just Supabase's own requests. This was confirmed as the
+ * root cause of a real regression: after adding it, Gemini calls in gemini.ts
+ * started failing on native (misreported as "offline" — see the narrower error
+ * classification there) while web stayed unaffected, because the polyfill only
+ * activates off-web (`Platform.OS !== 'web'`) and Gemini's calls are otherwise
+ * identical in shape to a working curl/browser request. Do not re-add it.
+ */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
