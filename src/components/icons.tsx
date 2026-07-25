@@ -185,6 +185,50 @@ export function LeafIcon({ size = 20, color, strokeWidth = 1.8 }: IconProps) {
   );
 }
 
+const CLOUD_PATH =
+  'M7.2 19h9.6a3.7 3.7 0 00.5-7.37 5.6 5.6 0 00-10.83-1.4A3.6 3.6 0 007.2 19z';
+
+/** Cloud outline: backup available */
+export function CloudIcon({ size = 22, color, strokeWidth = 1.8 }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path d={CLOUD_PATH} stroke={color} strokeWidth={strokeWidth} strokeLinejoin="round" />
+    </Svg>
+  );
+}
+
+/** Cloud with a tick: backup up to date */
+export function CloudCheckIcon({ size = 22, color, strokeWidth = 1.8 }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path d={CLOUD_PATH} stroke={color} strokeWidth={strokeWidth} strokeLinejoin="round" />
+      <Path
+        d="M9.4 14.2l1.9 1.9 3.5-3.9"
+        stroke={color}
+        strokeWidth={strokeWidth + 0.3}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </Svg>
+  );
+}
+
+/** Cloud with an exclamation: backup needs attention */
+export function CloudAlertIcon({ size = 22, color, strokeWidth = 1.8 }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path d={CLOUD_PATH} stroke={color} strokeWidth={strokeWidth} strokeLinejoin="round" />
+      <Path
+        d="M12 11.2v3"
+        stroke={color}
+        strokeWidth={strokeWidth + 0.3}
+        strokeLinecap="round"
+      />
+      <Circle cx="12" cy="16.4" r="0.9" fill={color} />
+    </Svg>
+  );
+}
+
 /** Tick mark */
 export function CheckIcon({ size = 16, color, strokeWidth = 2.4 }: IconProps) {
   return (

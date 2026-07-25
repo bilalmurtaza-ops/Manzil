@@ -3,6 +3,7 @@ import { useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
+import { CloudNudge } from '../../src/components/CloudNudge';
 import { ChevronIcon, FlameIcon, LeafIcon, StarIcon } from '../../src/components/icons';
 import { ProgressRing } from '../../src/components/ProgressRing';
 import { Screen } from '../../src/components/Screen';
@@ -90,6 +91,8 @@ export default function TodayScreen() {
             </Text>
           </ProgressRing>
         </Animated.View>
+
+        <CloudNudge />
 
         <Pressable
           style={styles.breatheCard}

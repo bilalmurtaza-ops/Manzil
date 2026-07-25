@@ -13,6 +13,7 @@ import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
+import { useBackupScheduler } from '../src/lib/backupScheduler';
 import { color } from '../src/theme/tokens';
 
 SplashScreen.preventAutoHideAsync();
@@ -26,6 +27,11 @@ export default function RootLayout() {
     NotoNastaliqUrdu_400Regular,
     NotoNastaliqUrdu_700Bold,
   });
+
+  // Registered unconditionally — it must sit above the `fontsLoaded` early return
+  // to obey the rules of hooks. Safe: the scheduler itself no-ops until the cloud
+  // store has hydrated and a device has been explicitly armed.
+  useBackupScheduler();
 
   useEffect(() => {
     if (fontsLoaded) SplashScreen.hideAsync();

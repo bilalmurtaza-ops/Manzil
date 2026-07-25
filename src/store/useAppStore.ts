@@ -34,6 +34,41 @@ interface AppState {
   resetAll: () => void;
 }
 
+/**
+ * The fields a cloud/file backup carries — everything persisted EXCEPT the
+ * transient `hydrated` flag, which is per-launch state and must never travel
+ * between devices.
+ *
+ * This is a compile-time tripwire, not documentation: `src/lib/backupSchema.ts`
+ * builds its envelope against `BackedUpState`, so adding a field to `AppState`
+ * without deciding whether it belongs in a backup makes `tsc` fail there.
+ */
+export type BackedUpState = Omit<
+  AppState,
+  | 'hydrated'
+  | 'setProfile'
+  | 'setPlan'
+  | 'toggleSessionDone'
+  | 'addQuizAttempt'
+  | 'addFlashcards'
+  | 'updateFlashcard'
+  | 'deleteFlashcard'
+  | 'appendChat'
+  | 'clearChat'
+  | 'toggleVibration'
+  | 'resetAll'
+>;
+
+export const BACKED_UP_KEYS = [
+  'profile',
+  'plan',
+  'quizAttempts',
+  'flashcards',
+  'chatHistory',
+  'activeDays',
+  'vibrationEnabled',
+] as const satisfies readonly (keyof BackedUpState)[];
+
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
 export const useAppStore = create<AppState>()(

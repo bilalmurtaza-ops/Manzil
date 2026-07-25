@@ -24,7 +24,8 @@
           "microphonePermission": "Manzil uses your microphone so you can speak to Ustaad instead of typing.",
           "speechRecognitionPermission": "Manzil uses speech recognition to turn what you say into a message for Ustaad."
         }
-      ]
+      ],
+      "expo-sharing"
     ],
     "experiments": {
       "typedRoutes": true

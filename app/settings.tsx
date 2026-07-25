@@ -1,6 +1,7 @@
+import Constants from 'expo-constants';
 import * as Haptics from 'expo-haptics';
 import { Stack, useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Alert,
   Platform,
@@ -13,10 +14,25 @@ import {
 } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { CloudAlertIcon, CloudCheckIcon, CloudIcon } from '../src/components/icons';
 import { BOARDS } from '../src/data/boards';
+import { exportBackupFile, pickBackupFile } from '../src/lib/backupFile';
+import {
+  applyEnvelope,
+  clearUndoSnapshot,
+  currentBackupState,
+  fingerprint,
+  undoRestore,
+  undoSnapshotExists,
+} from '../src/lib/backupRestore';
+import { parseBackup, summarize } from '../src/lib/backupSchema';
+import { requestBackup } from '../src/lib/backupScheduler';
+import { BackupError } from '../src/lib/cloudBackup';
 import { generatePlan, repairPlan } from '../src/lib/planEngine';
+import { isCloudConfigured } from '../src/lib/supabase';
 import type { ClassLevel, StudyGroup } from '../src/lib/types';
 import { useAppStore } from '../src/store/useAppStore';
+import { deviceLabel, useCloudStore } from '../src/store/useCloudStore';
 import { color, font, radius, space, type } from '../src/theme/tokens';
 
 export default function SettingsScreen() {
@@ -40,6 +56,48 @@ export default function SettingsScreen() {
   const [profileNotice, setProfileNotice] = useState<string | null>(null);
   const [repairNotice, setRepairNotice] = useState<string | null>(null);
   const [chatClearedNotice, setChatClearedNotice] = useState(false);
+
+  // ---- cloud backup ----
+  const cloudSession = useCloudStore((s) => s.session);
+  const cloudAuto = useCloudStore((s) => s.autoBackup);
+  const cloudLastAt = useCloudStore((s) => s.lastBackupAt);
+  const cloudError = useCloudStore((s) => s.lastError);
+  const cloudStatus = useCloudStore((s) => s.status);
+  const cloudConflict = useCloudStore((s) => s.conflict);
+  const cloudDeviceId = useCloudStore((s) => s.deviceId);
+  const undoAvailableAt = useCloudStore((s) => s.undoAvailableAt);
+  const disarmCloud = useCloudStore((s) => s.disarm);
+
+  const [backupNotice, setBackupNotice] = useState<string | null>(null);
+  const [backupError, setBackupError] = useState<string | null>(null);
+  const [fileBusy, setFileBusy] = useState(false);
+  const [undoPresent, setUndoPresent] = useState(false);
+
+  const cloudConfigured = isCloudConfigured();
+
+  // The store flag can outlive the on-disk snapshot (e.g. app data cleared), so
+  // confirm the file is really there before offering Undo.
+  useEffect(() => {
+    let alive = true;
+    void undoSnapshotExists().then((exists) => {
+      if (alive) setUndoPresent(exists);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [undoAvailableAt]);
+
+  const flashBackup = (msg: string) => {
+    setBackupError(null);
+    setBackupNotice(msg);
+    setTimeout(() => setBackupNotice(null), 4000);
+  };
+
+  const failBackup = (e: unknown) => {
+    setBackupNotice(null);
+    setBackupError(e instanceof BackupError ? e.message : 'Something went wrong. Try again.');
+    setTimeout(() => setBackupError(null), 6000);
+  };
 
   const triggerHapticIfEnabled = () => {
     if (vibrationEnabled) {
@@ -129,20 +187,158 @@ export default function SettingsScreen() {
 
   const handleResetAll = () => {
     const doReset = () => {
+      // Stop this device uploading its now-empty state over a good cloud backup.
+      disarmCloud('local data erased');
       resetAll();
       router.replace('/onboarding');
     };
+    const body =
+      'This erases your profile, plan, quiz history, and flashcards on this device. Your cloud backup is not deleted.';
     if (Platform.OS === 'web') {
-      if (window.confirm('Erase all profile, plan, quiz, and flashcard data?')) {
+      if (window.confirm(body)) {
         doReset();
       }
       return;
     }
-    Alert.alert('Start over?', 'This erases your profile, plan, quiz history, and flashcards.', [
+    Alert.alert('Start over?', body, [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Erase everything', style: 'destructive', onPress: doReset },
     ]);
   };
+
+  const backupMeta = () => ({
+    appVersion: Constants.expoConfig?.version ?? '',
+    platform: Platform.OS,
+    deviceLabel: deviceLabel(Platform.OS, cloudDeviceId),
+  });
+
+  const handleBackupNow = async () => {
+    triggerHapticIfEnabled();
+    try {
+      await requestBackup('manual');
+      flashBackup('Backed up to the cloud.');
+    } catch (e) {
+      failBackup(e);
+    }
+  };
+
+  const handleExportFile = async () => {
+    if (fileBusy) return;
+    triggerHapticIfEnabled();
+    setFileBusy(true);
+    try {
+      const outcome = await exportBackupFile(currentBackupState(), backupMeta());
+      flashBackup(
+        outcome.via === 'download'
+          ? `Downloaded ${outcome.fileName}`
+          : outcome.via === 'share-sheet'
+            ? `Backup file ready: ${outcome.fileName}`
+            : `Saved ${outcome.fileName} to this device.`,
+      );
+    } catch (e) {
+      if (e instanceof BackupError && e.kind === 'cancelled') return;
+      failBackup(e);
+    } finally {
+      setFileBusy(false);
+    }
+  };
+
+  const applyImported = async (raw: string) => {
+    let json: unknown;
+    try {
+      json = JSON.parse(raw);
+    } catch {
+      failBackup(new BackupError("That file isn't valid JSON.", 'corrupt'));
+      return;
+    }
+
+    const parsed = parseBackup(json);
+    if (!parsed.ok) {
+      failBackup(new BackupError(parsed.error.message, parsed.error.kind));
+      return;
+    }
+
+    const summary = summarize(parsed.envelope);
+    const warnLine = parsed.warnings.length > 0 ? `\n\nNote: ${parsed.warnings.join(' ')}` : '';
+    const message = `Replace this device's data with this backup?\n\n${summary}${warnLine}\n\nYou can undo straight afterwards.`;
+
+    const run = async () => {
+      try {
+        const result = await applyEnvelope(parsed.envelope);
+        const bits = ['Backup restored from file.'];
+        if (result.planRepaired) bits.push('Missed sessions were moved forward.');
+        if (parsed.warnings.length > 0) bits.push(parsed.warnings.join(' '));
+        flashBackup(bits.join(' '));
+        setUndoPresent(result.undoSaved);
+        setTimeout(() => router.replace('/(tabs)/today'), 900);
+      } catch (e) {
+        failBackup(e);
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      if (window.confirm(message)) await run();
+      return;
+    }
+    Alert.alert('Restore this backup?', message, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Restore', style: 'destructive', onPress: () => void run() },
+    ]);
+  };
+
+  const handleImportFile = async () => {
+    if (fileBusy) return;
+    triggerHapticIfEnabled();
+    setFileBusy(true);
+    try {
+      const raw = await pickBackupFile();
+      await applyImported(raw);
+    } catch (e) {
+      if (e instanceof BackupError && e.kind === 'cancelled') return;
+      failBackup(e);
+    } finally {
+      setFileBusy(false);
+    }
+  };
+
+  const handleUndoRestore = async () => {
+    triggerHapticIfEnabled();
+    try {
+      await undoRestore();
+      setUndoPresent(false);
+      flashBackup('Restore undone — this device is back to how it was.');
+      setTimeout(() => router.replace('/(tabs)/today'), 900);
+    } catch (e) {
+      setUndoPresent(false);
+      failBackup(e instanceof Error ? new BackupError(e.message, 'corrupt') : e);
+    }
+  };
+
+  const handleDiscardUndo = async () => {
+    triggerHapticIfEnabled();
+    await clearUndoSnapshot();
+    setUndoPresent(false);
+    flashBackup('Undo copy cleared.');
+  };
+
+  /** One-line description of where cloud backup stands right now. */
+  const cloudStatusLine = (): string => {
+    if (!cloudConfigured) return 'Not available in this build';
+    if (!cloudSession) return 'Not signed in';
+    if (cloudConflict) return 'Needs your attention';
+    if (cloudStatus === 'uploading') return 'Backing up…';
+    if (cloudError) return cloudError.message;
+    if (!cloudLastAt) return 'Signed in — not backed up yet';
+    const mins = Math.round((Date.now() - new Date(cloudLastAt).getTime()) / 60_000);
+    if (mins < 1) return 'Backed up just now';
+    if (mins < 60) return `Backed up ${mins} min ago`;
+    const hrs = Math.round(mins / 60);
+    if (hrs < 24) return `Backed up ${hrs} hour${hrs === 1 ? '' : 's'} ago`;
+    const days = Math.round(hrs / 24);
+    return `Backed up ${days} day${days === 1 ? '' : 's'} ago`;
+  };
+
+  const CloudStatusIcon = cloudConflict || cloudError ? CloudAlertIcon : cloudLastAt ? CloudCheckIcon : CloudIcon;
 
   const boardName = profile
     ? BOARDS.find((b) => b.id === profile.boardId)?.name ?? profile.boardId
@@ -391,6 +587,71 @@ export default function SettingsScreen() {
             </>
           )}
 
+          {/* Section 3.5: Cloud Backup */}
+          <Text style={styles.sectionLabel}>CLOUD BACKUP — کلاؤڈ بیک اپ</Text>
+          <View style={styles.card}>
+            <View style={styles.settingRow}>
+              <CloudStatusIcon
+                size={22}
+                color={cloudConflict || cloudError ? color.rust : cloudLastAt ? color.greenMid : color.inkFaint}
+              />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.settingTitle}>
+                  {cloudSession ? 'Your progress is protected' : 'Protect your progress'}
+                </Text>
+                <Text style={styles.settingSub}>{cloudStatusLine()}</Text>
+              </View>
+            </View>
+
+            {cloudSession && (
+              <>
+                <View style={styles.divider} />
+                <View style={styles.infoRow}>
+                  <Text style={styles.infoLabel}>Account</Text>
+                  <Text style={styles.infoValue}>{cloudSession.email}</Text>
+                </View>
+                <View style={[styles.infoRow, { borderBottomWidth: 0 }]}>
+                  <Text style={styles.infoLabel}>Automatic backup</Text>
+                  <Text style={styles.infoValue}>{cloudAuto === 'armed' ? 'On' : 'Off'}</Text>
+                </View>
+              </>
+            )}
+
+            {backupNotice && (
+              <View style={styles.noticeBox}>
+                <Text style={styles.noticeText}>{backupNotice}</Text>
+              </View>
+            )}
+            {backupError && (
+              <View style={[styles.noticeBox, styles.noticeBoxError]}>
+                <Text style={[styles.noticeText, styles.noticeTextError]}>{backupError}</Text>
+              </View>
+            )}
+
+            {!cloudConfigured && (
+              <View style={styles.noticeBox}>
+                <Text style={styles.noticeText}>
+                  Cloud backup isn&apos;t set up in this build — use Export below to save a backup file.
+                </Text>
+              </View>
+            )}
+
+            {cloudConfigured && (
+              <>
+                {cloudSession && cloudAuto === 'armed' && !cloudConflict && (
+                  <Pressable style={styles.actionRowBtn} onPress={() => void handleBackupNow()}>
+                    <Text style={styles.actionRowText}>↑ Back up now</Text>
+                  </Pressable>
+                )}
+                <Pressable style={styles.actionRowBtn} onPress={() => router.push('/cloud')}>
+                  <Text style={styles.actionRowText}>
+                    {cloudSession ? 'Manage backup & restore →' : '☁ Set up cloud backup'}
+                  </Text>
+                </Pressable>
+              </>
+            )}
+          </View>
+
           {/* Section 4: Data & Storage */}
           <Text style={styles.sectionLabel}>DATA & STORAGE — ڈیٹا اور ذخیرہ</Text>
           <View style={styles.card}>
@@ -417,6 +678,38 @@ export default function SettingsScreen() {
               <Pressable style={styles.actionRowBtn} onPress={handleClearChat}>
                 <Text style={styles.actionRowText}>🗑 Clear Ustaad chat history</Text>
               </Pressable>
+            )}
+
+            {/* Backup files work with no account and no network — this pair is the
+                floor beneath every other backup path and is never gated. */}
+            <Pressable
+              style={[styles.actionRowBtn, fileBusy && { opacity: 0.6 }]}
+              onPress={() => void handleExportFile()}
+              disabled={fileBusy}
+            >
+              <Text style={styles.actionRowText}>⤓ Export backup file</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.actionRowBtn, fileBusy && { opacity: 0.6 }]}
+              onPress={() => void handleImportFile()}
+              disabled={fileBusy}
+            >
+              <Text style={styles.actionRowText}>⤒ Import backup file</Text>
+            </Pressable>
+
+            {undoPresent && (
+              <>
+                <View style={styles.divider} />
+                <Text style={styles.settingSub}>
+                  A copy of this device&apos;s data from just before the last restore is still saved.
+                </Text>
+                <Pressable style={styles.actionRowBtn} onPress={() => void handleUndoRestore()}>
+                  <Text style={styles.actionRowText}>↩ Undo restore</Text>
+                </Pressable>
+                <Pressable style={styles.actionRowBtn} onPress={() => void handleDiscardUndo()}>
+                  <Text style={styles.actionRowText}>Discard undo copy</Text>
+                </Pressable>
+              </>
             )}
           </View>
 
@@ -676,6 +969,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   noticeText: { fontFamily: font.semibold, fontSize: 12, color: color.greenDeep, textAlign: 'center' },
+  noticeBoxError: { backgroundColor: color.rustSoft },
+  noticeTextError: { color: color.rust, lineHeight: 18 },
 
   resetCardBtn: {
     backgroundColor: color.rustSoft,

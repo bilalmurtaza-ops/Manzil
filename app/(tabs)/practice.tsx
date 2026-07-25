@@ -75,7 +75,7 @@ export default function PracticeScreen() {
           >
             <DojoIcon size={22} color={color.greenMid} />
             <View style={{ flex: 1 }}>
-              <Text style={styles.dojoTitle}>Theorem Dojo · مسئلہ ڈوجو</Text>
+              <Text style={styles.dojoTitle}>Theorem Dojo · مسئلہ ڈوجو (ہندسی ثبوت)</Text>
               <Text style={styles.dojoSub}>
                 Class {profile.classLevel} · {profile.classLevel === '10' ? '6 compulsory board theorems' : '4 proof results'} · tap-to-arrange proof puzzle
               </Text>

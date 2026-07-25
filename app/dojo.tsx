@@ -192,7 +192,7 @@ export default function DojoScreen() {
         </Pressable>
         <View style={{ flex: 1 }}>
           <Text style={styles.topLabel}>MATHEMATICS · ریاضی</Text>
-          <Text style={styles.topTitle}>Theorem Dojo · مسئلہ ڈوجو</Text>
+          <Text style={styles.topTitle}>Theorem Dojo · مسئلہ ڈوجو (ہندسی ثبوت)</Text>
         </View>
         {phase !== 'complete' && (
           <View style={styles.counterBadge}>

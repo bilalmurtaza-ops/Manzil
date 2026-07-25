@@ -1,0 +1,61 @@
+# Keeps the free-tier Supabase project from being paused for inactivity.
+#
+# Supabase pauses Free-plan projects that receive no API requests for ~7 days.
+# For a contest build that is a real hazard: a quiet week between the last test
+# and judging would leave a judge facing a dead backend. Pinging every ~3 days
+# gives roughly 2x margin against GitHub's known cron delays and skips.
+#
+# The job asserts the status codes so it FAILS LOUDLY — a red badge tells you the
+# project already paused, instead of a judge discovering it.
+#
+# Caveat: GitHub disables scheduled workflows on repositories with no commits for
+# 60 days. workflow_dispatch is kept so it can be re-enabled by hand from the
+# Actions tab.
+name: Keep Supabase project awake
+
+on:
+  schedule:
+    # Every 3 days, deliberately off-the-hour (GitHub's cron queue is congested at :00).
+    - cron: '17 6 */3 * *'
+  workflow_dispatch:
+
+# No repository contents are needed, so grant nothing.
+permissions: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping REST and Auth endpoints
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${SUPABASE_URL:-}" ] || [ -z "${SUPABASE_ANON_KEY:-}" ]; then
+            echo "::error::SUPABASE_URL / SUPABASE_ANON_KEY repository secrets are not set."
+            exit 1
+          fi
+
+          # Two endpoints, because which one Supabase's (undocumented) activity
+          # heuristic counts is not published. /rest/v1/ needs no table and no
+          # grants; /auth/v1/health is a separate service.
+          rest=$(curl -sS --max-time 30 -o /dev/null -w '%{http_code}' \
+            "${SUPABASE_URL}/rest/v1/" -H "apikey: ${SUPABASE_ANON_KEY}")
+          auth=$(curl -sS --max-time 30 -o /dev/null -w '%{http_code}' \
+            "${SUPABASE_URL}/auth/v1/health" -H "apikey: ${SUPABASE_ANON_KEY}")
+
+          echo "rest=${rest} auth=${auth}"
+
+          if [ "${rest}" != "200" ]; then
+            echo "::error::REST endpoint returned ${rest} — the project may be paused."
+            exit 1
+          fi
+          if [ "${auth}" != "200" ]; then
+            echo "::error::Auth endpoint returned ${auth} — the project may be paused."
+            exit 1
+          fi
+
+          echo "Supabase project is awake."
