@@ -6,11 +6,13 @@
  * Run: npx tsx scripts/test-plan-engine.ts
  */
 import { generatePlan, repairPlan, todayISO } from 'C:/Users/bilal/Desktop/app/src/lib/planEngine';
+import { computeReadiness } from 'C:/Users/bilal/Desktop/app/src/lib/readiness';
 import { subjectsForProfile } from 'C:/Users/bilal/Desktop/app/src/data/syllabus';
+import { STUDY_TIME_MINUTES } from 'C:/Users/bilal/Desktop/app/src/lib/studyTime';
 import type { ClassLevel, StudentProfile, StudyGroup, StudyPlan } from 'C:/Users/bilal/Desktop/app/src/lib/types';
 
 const SESSION_MIN = 20; // mirrors planEngine
-const TIME_OPTIONS = [60, 90, 120, 180, 240];
+const TIME_OPTIONS = STUDY_TIME_MINUTES;
 const COMBOS: [ClassLevel, StudyGroup][] = [
   ['9', 'science-bio'], ['9', 'science-cs'], ['9', 'arts'],
   ['10', 'science-bio'], ['10', 'science-cs'], ['10', 'arts'],
@@ -107,10 +109,10 @@ for (const runway of [225, 90]) {
 console.log('\n=== 3. Session count must grow with available time, not stay pinned ===');
 {
   const at = (dm: number) => studySessionsPerDay(generatePlan(mkProfile('10', 'science-bio', dm, 225)));
-  const s60 = at(60), s180 = at(180), s240 = at(240);
-  console.log(`  info: 60m -> ${s60.toFixed(2)} sessions/day, 180m -> ${s180.toFixed(2)}, 240m -> ${s240.toFixed(2)}`);
-  check('240m/day yields more study sessions than 60m/day', s240 > s60 + 1.5);
-  check('180m/day yields more study sessions than 60m/day', s180 > s60 + 1);
+  const s120 = at(120), s360 = at(360), s420 = at(420);
+  console.log(`  info: 120m -> ${s120.toFixed(2)} sessions/day, 360m -> ${s360.toFixed(2)}, 420m -> ${s420.toFixed(2)}`);
+  check('420m/day yields more study sessions than 120m/day', s420 > s120 + 3);
+  check('360m/day yields more study sessions than 120m/day', s360 > s120 + 2);
 }
 
 // ------------------------------------------------------------ 4. session floor
@@ -169,7 +171,7 @@ console.log('\n=== 5. Every confidence step must change that subject\'s time ===
 
 // --------------------------------------------------------------- 5b. variety
 console.log('\n=== 5b. A long day must spread across subjects, not stack one ===');
-for (const [runway, dm] of [[12, 240], [30, 240], [225, 240], [90, 180]] as [number, number][]) {
+for (const [runway, dm] of [[12, 420], [30, 420], [225, 420], [90, 360]] as [number, number][]) {
   const plan = generatePlan(mkProfile('10', 'science-bio', dm, runway));
   const perDay = new Map<string, string[]>();
   for (const s of plan.sessions) {
@@ -194,7 +196,7 @@ for (const [runway, dm] of [[12, 240], [30, 240], [225, 240], [90, 180]] as [num
 // ---------------------------------------------------------------- 6. coverage
 console.log('\n=== 6. Every examined chapter still gets a first pass ===');
 for (const [cls, grp] of COMBOS) {
-  for (const dm of [60, 240]) {
+  for (const dm of [120, 420]) {
     const p = mkProfile(cls, grp, dm, 225);
     const plan = generatePlan(p);
     const expected = new Set<string>();
@@ -205,6 +207,18 @@ for (const [cls, grp] of COMBOS) {
     const missing = [...expected].filter((c) => !got.has(c));
     check(`class ${cls} ${grp} @${dm}m covers all ${expected.size} chapters`, missing.length === 0, `missing ${missing.length}`);
   }
+}
+
+// ------------------------------------------------------- 6b. practice capacity
+console.log('\n=== 6b. Practice phase honors every selected daily-time target ===');
+for (const dm of TIME_OPTIONS) {
+  const plan = generatePlan(mkProfile('10', 'science-bio', dm, 225));
+  const practiceByDay = new Map<string, number>();
+  for (const s of plan.sessions) {
+    if (s.kind === 'practice') practiceByDay.set(s.date, (practiceByDay.get(s.date) ?? 0) + s.minutes);
+  }
+  const totals = [...practiceByDay.values()];
+  check(`${dm}m/day practice days use the full daily target`, totals.length > 0 && totals.every((total) => total === dm), totals.join(', '));
 }
 
 // -------------------------------------------------------- 7. no empty stretches
@@ -254,6 +268,22 @@ console.log('\n=== 9. repairPlan preserves history and respects capacity ===');
   check('no session count lost', repaired.sessions.length === stale.sessions.length);
   const pendingPast = repaired.sessions.filter((s) => !s.done && s.date < todayISO());
   check('no undone session left in the past', pendingPast.length === 0, `${pendingPast.length} remain`);
+}
+
+// -------------------------------------------------------------- 10. readiness
+console.log('\n=== 10. Every supported plan remains readable by readiness scoring ===');
+for (const [cls, grp] of COMBOS) {
+  for (const dm of TIME_OPTIONS) {
+    const profile = mkProfile(cls, grp, dm, 225);
+    const plan = generatePlan(profile);
+    const readiness = computeReadiness(profile, plan, []);
+    check(
+      `${cls}/${grp} @${dm}m returns finite readiness for every subject`,
+      readiness.subjects.length === subjectsForProfile(cls, grp).length
+        && Number.isFinite(readiness.overall)
+        && readiness.subjects.every((subject) => Number.isFinite(subject.score)),
+    );
+  }
 }
 
 console.log(`\n================ ${pass} passed, ${fail} failed ================\n`);

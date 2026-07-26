@@ -218,8 +218,8 @@ export function generatePlan(profile: StudentProfile): StudyPlan {
    *
    * This used to be `min(capacity, neededStudy*scale / studyDaysTarget)`, which on
    * a roomy runway collapsed to neededStudy/studyDaysTarget (~90 min for class 10)
-   * *independently of capacity*. Every student choosing 1.5h, 2h, 3h or 4h+ got a
-   * byte-identical 90-minute study phase for the first ~138 days. Daily time now
+   * *independently of capacity*. High-capacity students got a byte-identical
+   * 90-minute study phase for the first ~138 days. Daily time now
    * decides how fast the first pass completes, and therefore how many revision
    * cycles fit afterwards — which is what the onboarding copy promises.
    */
@@ -287,29 +287,32 @@ export function generatePlan(profile: StudentProfile): StudyPlan {
   }
 
   // ---- Practice phase: board-style drilling, rotating subjects daily.
+  //
+  // Unlike the first pass, practice does not have a content queue to exhaust.
+  // Tile the student's whole capacity with real focused blocks. A previous
+  // fixed eight-block guard silently capped this phase at 360 minutes, so a
+  // 7-hour plan promised 420 minutes but scheduled only 360.
+  const practiceBlocks = splitBlocks(capacity, 45);
+  const practiceSubjects = subjects.filter((subject) =>
+    subject.chapters[profile.classLevel].some((chapter) => chapter.weight >= 3),
+  );
   for (let day = Math.max(practiceStart, afterStudy); day < totalDays; day++) {
     const date = addDays(todayISO(), day);
-    let left = capacity;
     let i = day;
-    let guard = 0;
-    while (left >= SESSION_MIN && guard < 8) {
-      guard += 1;
-      const subject = subjects[i % subjects.length];
+    for (let blockIndex = 0; blockIndex < practiceBlocks.length; blockIndex++) {
+      const subject = practiceSubjects[i % practiceSubjects.length];
       i += 1;
       const chapters = subject.chapters[profile.classLevel].filter((c) => c.weight >= 3);
-      if (chapters.length === 0) continue;
-      const chapter = chapters[(day + guard) % chapters.length];
-      const minutes = Math.min(45, left);
+      const chapter = chapters[(day + blockIndex + 1) % chapters.length];
       sessions.push({
         id: nextId(),
         date,
         subjectId: subject.id,
         chapterId: chapter.id,
         kind: 'practice',
-        minutes,
+        minutes: practiceBlocks[blockIndex],
         done: false,
       });
-      left -= minutes;
     }
   }
 

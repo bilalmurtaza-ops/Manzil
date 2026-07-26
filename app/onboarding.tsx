@@ -17,6 +17,7 @@ import { PrimaryButton } from '../src/components/PrimaryButton';
 import { BOARDS } from '../src/data/boards';
 import { subjectsForProfile } from '../src/data/syllabus';
 import { generatePlan, todayISO } from '../src/lib/planEngine';
+import { STUDY_TIME_OPTIONS } from '../src/lib/studyTime';
 import type { ClassLevel, StudentProfile, StudyGroup } from '../src/lib/types';
 import { useAppStore } from '../src/store/useAppStore';
 import { color, font, radius, space, subjectColor, type } from '../src/theme/tokens';
@@ -28,14 +29,6 @@ const GROUPS: { id: StudyGroup; label: string; sub: string }[] = [
   { id: 'science-bio', label: 'Science — Biology', sub: 'Physics · Chemistry · Biology' },
   { id: 'science-cs', label: 'Science — Computer', sub: 'Physics · Chemistry · Computer Science' },
   { id: 'arts', label: 'Arts / General', sub: 'General Math · General Science · electives' },
-];
-
-const TIME_OPTIONS = [
-  { minutes: 60, label: '1 hour', sub: 'Light but steady' },
-  { minutes: 90, label: '1.5 hours', sub: 'Balanced routine' },
-  { minutes: 120, label: '2 hours', sub: 'Solid preparation' },
-  { minutes: 180, label: '3 hours', sub: 'Serious push' },
-  { minutes: 240, label: '4+ hours', sub: 'Exam-season mode' },
 ];
 
 function defaultExamDate(classLevel: ClassLevel): string {
@@ -339,7 +332,7 @@ export default function Onboarding() {
 
           {step === 'time' && (
             <StepBlock title="Daily study time?" urdu="روزانہ کتنا وقت؟" sub="Be honest — the plan adapts to reality, not wishes.">
-              {TIME_OPTIONS.map((t) => (
+              {STUDY_TIME_OPTIONS.map((t) => (
                 <OptionCard
                   key={t.minutes}
                   label={t.label}

@@ -5,6 +5,7 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 import { Screen } from '../../src/components/Screen';
 import { getChapter, getSubject } from '../../src/data/syllabus';
 import { daysUntil, generatePlan, todayISO } from '../../src/lib/planEngine';
+import { STUDY_TIME_MINUTES } from '../../src/lib/studyTime';
 import type { PlanSession } from '../../src/lib/types';
 import { useAppStore } from '../../src/store/useAppStore';
 import { color, font, radius, space, subjectColor, type } from '../../src/theme/tokens';
@@ -15,7 +16,7 @@ const KIND_SHORT: Record<PlanSession['kind'], string> = {
   practice: 'Drill',
 };
 
-const TIME_CHIPS = [60, 90, 120, 180, 240];
+const TIME_CHIPS = STUDY_TIME_MINUTES;
 
 function dayLabel(iso: string): string {
   const today = todayISO();
