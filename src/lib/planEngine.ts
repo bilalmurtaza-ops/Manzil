@@ -92,6 +92,8 @@ function fillDays(
   startDay: number,
   endDay: number,
   dailyLoad: number,
+  /** Day 0. Injectable so plan maintenance can run on a simulated clock. */
+  baseDate: string = todayISO(),
 ): number {
   let day = startDay;
   while (day < endDay) {
@@ -101,7 +103,7 @@ function fillDays(
     );
     if (remainingTotal === 0) return day;
 
-    const date = addDays(todayISO(), day);
+    const date = addDays(baseDate, day);
     let left = dailyLoad;
     /** How many blocks each subject already has today — drives variety. */
     const usedCount = new Map<string, number>();
@@ -182,6 +184,58 @@ function fillDays(
   return day;
 }
 
+/**
+ * Per-chapter study minutes after the confidence adjustment.
+ * Module-level so the revision top-up can rebuild it identically without
+ * re-running the whole generator — it is a pure function of profile + syllabus.
+ */
+function computeChapterMinutes(profile: StudentProfile): Map<string, number> {
+  const chapterMinutes = new Map<string, number>();
+  for (const subject of subjectsForProfile(profile.classLevel, profile.group)) {
+    const confidence = profile.confidence[subject.id] ?? 3;
+    const confFactor = 1 + (3 - confidence) * 0.18; // weak subject => up to +36% time
+    for (const chapter of subject.chapters[profile.classLevel]) {
+      if (chapter.weight <= 1) continue;
+      chapterMinutes.set(chapter.id, Math.round(chapter.estMinutes * confFactor));
+    }
+  }
+  return chapterMinutes;
+}
+
+/**
+ * One revision cycle over every examined chapter, heaviest first.
+ *
+ * Lifted out of `generatePlan`'s closure so `extendRevision()` can append further
+ * cycles to an existing plan using the exact same shape — a student who studies
+ * ahead must not get differently-built revision from one who doesn't.
+ */
+function buildReviseQueues(
+  profile: StudentProfile,
+  chapterMinutes: Map<string, number>,
+): Map<string, Block[]> {
+  const queues = new Map<string, Block[]>();
+  for (const subject of subjectsForProfile(profile.classLevel, profile.group)) {
+    const confidence = profile.confidence[subject.id] ?? 3;
+    const chapters = [...subject.chapters[profile.classLevel]]
+      .filter((c) => c.weight >= 2)
+      .sort((a, b) => b.weight - a.weight);
+    // Continuous in confidence, so every rating step actually changes the plan.
+    // Was a binary `confidence <= 2 ? 0.45 : 0.3`, which made ratings 3, 4 and 5
+    // produce identical revision depth for the same chapter.
+    const reviseFactor = 0.25 + (5 - confidence) * 0.05; // 5→0.25 … 1→0.45
+    const queue: Block[] = chapters.map((c) => ({
+      subjectId: subject.id,
+      chapterId: c.id,
+      minutes: Math.max(
+        SESSION_MIN,
+        Math.min(45, Math.round((chapterMinutes.get(c.id) ?? c.estMinutes) * reviseFactor)),
+      ),
+    }));
+    if (queue.length > 0) queues.set(subject.id, queue);
+  }
+  return queues;
+}
+
 export function generatePlan(profile: StudentProfile): StudyPlan {
   const subjects = subjectsForProfile(profile.classLevel, profile.group);
   const totalDays = Math.max(daysUntil(profile.examDate) - 1, 3);
@@ -189,19 +243,9 @@ export function generatePlan(profile: StudentProfile): StudyPlan {
 
   // ---- Build the study queues (first pass over every examined chapter).
   const studyQueues = new Map<string, Block[]>();
-  const chapterMinutes = new Map<string, number>(); // chapterId -> adjusted study minutes
+  const chapterMinutes = computeChapterMinutes(profile);
   let neededStudy = 0;
-
-  for (const subject of subjects) {
-    const confidence = profile.confidence[subject.id] ?? 3;
-    const confFactor = 1 + (3 - confidence) * 0.18; // weak subject => up to +36% time
-    for (const chapter of subject.chapters[profile.classLevel]) {
-      if (chapter.weight <= 1) continue;
-      const minutes = Math.round(chapter.estMinutes * confFactor);
-      chapterMinutes.set(chapter.id, minutes);
-      neededStudy += minutes;
-    }
-  }
+  for (const minutes of chapterMinutes.values()) neededStudy += minutes;
 
   // Phase boundaries.
   const studyDaysTarget = Math.max(Math.round(totalDays * 0.62), 1);
@@ -249,31 +293,6 @@ export function generatePlan(profile: StudentProfile): StudyPlan {
   const sessions: PlanSession[] = [];
   const afterStudy = fillDays(sessions, studyQueues, 'study', 0, practiceStart, studyDailyLoad);
 
-  // ---- Revision cycles fill the gap between study pass and practice phase.
-  const buildReviseQueues = () => {
-    const queues = new Map<string, Block[]>();
-    for (const subject of subjects) {
-      const confidence = profile.confidence[subject.id] ?? 3;
-      const chapters = [...subject.chapters[profile.classLevel]]
-        .filter((c) => c.weight >= 2)
-        .sort((a, b) => b.weight - a.weight);
-      // Continuous in confidence, so every rating step actually changes the plan.
-      // Was a binary `confidence <= 2 ? 0.45 : 0.3`, which made ratings 3, 4 and 5
-      // produce identical revision depth for the same chapter.
-      const reviseFactor = 0.25 + (5 - confidence) * 0.05; // 5→0.25 … 1→0.45
-      const queue: Block[] = chapters.map((c) => ({
-        subjectId: subject.id,
-        chapterId: c.id,
-        minutes: Math.max(
-          SESSION_MIN,
-          Math.min(45, Math.round((chapterMinutes.get(c.id) ?? c.estMinutes) * reviseFactor)),
-        ),
-      }));
-      if (queue.length > 0) queues.set(subject.id, queue);
-    }
-    return queues;
-  };
-
   // Revision repeats until the practice phase starts. The old hard `cycles < 6`
   // cap was safe only because the study pass was throttled to ~90 min/day and so
   // consumed most of the runway; now that a high-capacity student finishes the
@@ -282,7 +301,14 @@ export function generatePlan(profile: StudentProfile): StudyPlan {
   let cursor = afterStudy;
   while (cursor < practiceStart) {
     const before = sessions.length;
-    cursor = fillDays(sessions, buildReviseQueues(), 'revise', cursor, practiceStart, capacity);
+    cursor = fillDays(
+      sessions,
+      buildReviseQueues(profile, chapterMinutes),
+      'revise',
+      cursor,
+      practiceStart,
+      capacity,
+    );
     if (sessions.length === before) break; // nothing schedulable — avoid spinning
   }
 
@@ -319,32 +345,215 @@ export function generatePlan(profile: StudentProfile): StudyPlan {
   return { generatedAt: new Date().toISOString(), examDate: profile.examDate, sessions };
 }
 
-/**
- * Auto-repair: pull unfinished past sessions forward without guilt.
- * Completed sessions stay as history; undone past sessions merge ahead of
- * future ones and everything reflows from today within daily capacity.
- */
-export function repairPlan(plan: StudyPlan, profile: StudentProfile): StudyPlan {
-  const today = todayISO();
-  const history = plan.sessions.filter((s) => s.done);
-  const pending = plan.sessions.filter((s) => !s.done);
-  const overdue = pending.some((s) => s.date < today);
-  if (!overdue) return plan;
+// ---------------------------------------------------------------------------
+// Plan maintenance: catching up when behind, and continuing when ahead.
+// ---------------------------------------------------------------------------
 
-  const ordered = [...pending].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
-  const repaired: PlanSession[] = [];
+/** Whole days between two ISO dates (negative if `to` is earlier). */
+const dayDiff = (fromISO: string, toISO: string): number =>
+  Math.round(
+    (new Date(`${toISO}T00:00:00`).getTime() - new Date(`${fromISO}T00:00:00`).getTime()) /
+      86_400_000,
+  );
+
+/**
+ * The date a session was actually completed on, or null if it isn't done.
+ *
+ * Exported and shared with the store so streak credit and plan maintenance can
+ * never disagree about what "studied today" means. Keying off `date` instead
+ * would deny a student any credit for lessons they pulled forward, and would
+ * strip today back out of `activeDays` on a day whose own sessions were
+ * completed earlier. `?? s.date` keeps older/restored sessions (done, but with
+ * no `doneAt` recorded) behaving exactly as they did before.
+ */
+export const completedOn = (s: PlanSession): string | null =>
+  s.done ? (s.doneAt?.slice(0, 10) ?? s.date) : null;
+
+/** Most days a student may pull forward in a single day. */
+export const MAX_DAYS_AHEAD = 3;
+
+/**
+ * How many future days the student has already pulled forward *today*.
+ *
+ * Derived from `doneAt` rather than stored, so it needs no new persisted state
+ * and survives an app restart for free. A future-dated session that was
+ * completed on an earlier day is not counted — that day is a hole for
+ * `reflowPlan` to close, not evidence of working ahead right now.
+ */
+export function daysAheadUsedToday(plan: StudyPlan | null, today: string = todayISO()): number {
+  if (!plan) return 0;
+  const dates = new Set<string>();
+  for (const s of plan.sessions) {
+    if (s.date > today && completedOn(s) === today) dates.add(s.date);
+  }
+  return dates.size;
+}
+
+/**
+ * The upcoming days a student may reveal, earliest first.
+ *
+ * A date qualifies while it still has unfinished work, or if it was worked on
+ * today (so re-opening the app still shows what was already done ahead).
+ */
+export function upcomingAheadDates(
+  plan: StudyPlan | null,
+  today: string = todayISO(),
+  limit: number = MAX_DAYS_AHEAD,
+): string[] {
+  if (!plan) return [];
+  const dates = new Set<string>();
+  for (const s of plan.sessions) {
+    if (s.date <= today) continue;
+    if (!s.done || completedOn(s) === today) dates.add(s.date);
+  }
+  return [...dates].sort().slice(0, limit);
+}
+
+/**
+ * Whether the calendar should be reflowed before being shown.
+ *
+ *  - undone work in the past      -> yes, catch up (the original repair case)
+ *  - work still pending today     -> no, an ordinary day
+ *  - nothing today but something  -> no, they finished today's plan; let them
+ *    was completed today             rest instead of force-feeding tomorrow
+ *  - nothing today, nothing done  -> yes, this day is a hole left by working
+ *    today, future work exists       ahead: continue with the next real work
+ */
+export function planNeedsReflow(plan: StudyPlan, today: string = todayISO()): boolean {
+  const pending = plan.sessions.filter((s) => !s.done);
+  if (pending.length === 0) return false;
+  if (pending.some((s) => s.date < today)) return true;
+  if (pending.some((s) => s.date === today)) return false;
+  if (plan.sessions.some((s) => completedOn(s) === today)) return false;
+  return pending.some((s) => s.date > today);
+}
+
+/**
+ * Re-lay all outstanding work from `today` at the student's daily capacity.
+ *
+ * Completed sessions are never moved or dropped — they are history. Session
+ * identity (id, subject, chapter, kind, minutes) is preserved; only `date`
+ * changes. Existing order is kept, which matters: `generatePlan` already
+ * interleaved subjects, so order-preserving re-packing inherits that variety.
+ *
+ * Future past-paper drills stay anchored where they were generated — they
+ * belong in the final stretch before the exam, not pulled forward with
+ * everything else. They still consume their day's budget so compacted study
+ * work cannot be stacked on top and blow the daily ceiling. Overdue drills are
+ * not anchored: those genuinely need catching up.
+ */
+export function reflowPlan(
+  plan: StudyPlan,
+  profile: StudentProfile,
+  today: string = todayISO(),
+): StudyPlan {
+  const pending = plan.sessions.filter((s) => !s.done);
+  if (pending.length === 0) return plan;
+
+  const capacity = Math.max(profile.dailyMinutes, 45);
+  const history = plan.sessions.filter((s) => s.done);
+  const anchored = pending.filter((s) => s.kind === 'practice' && s.date >= today);
+  const movable = pending.filter((s) => !(s.kind === 'practice' && s.date >= today));
+
+  const anchoredByDate = new Map<string, number>();
+  for (const s of anchored) {
+    anchoredByDate.set(s.date, (anchoredByDate.get(s.date) ?? 0) + s.minutes);
+  }
+  const budgetFor = (date: string) => capacity - (anchoredByDate.get(date) ?? 0);
+
+  const examDay = Math.max(dayDiff(today, profile.examDate), 0);
+  const ordered = [...movable].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+
+  const reflowed: PlanSession[] = [];
   let day = 0;
-  let left = profile.dailyMinutes;
+  let left = budgetFor(today);
   for (const session of ordered) {
-    if (session.minutes > left) {
+    // Skip past days already spoken for by anchored drills. Bounded by the exam
+    // date so this always terminates even if a day has no room at all.
+    while (session.minutes > left && day < examDay) {
       day += 1;
-      left = profile.dailyMinutes;
+      left = budgetFor(addDays(today, day));
     }
     const date = addDays(today, day);
-    const capped = date > profile.examDate ? profile.examDate : date;
-    repaired.push({ ...session, date: capped });
+    reflowed.push({ ...session, date: date > profile.examDate ? profile.examDate : date });
     left -= session.minutes;
   }
 
-  return { ...plan, sessions: [...history, ...repaired] };
+  return { ...plan, sessions: [...history, ...reflowed, ...anchored] };
+}
+
+/**
+ * Append revision cycles to fill any gap between the last outstanding piece of
+ * work and the start of the past-paper phase.
+ *
+ * Without this, a student who consistently works ahead simply runs out: they
+ * would finish the whole plan weeks early and meet the same "nothing to do"
+ * dead end this feature exists to remove. Cycles are built by the same
+ * `buildReviseQueues` the generator uses, and placed by the same `fillDays`, so
+ * topped-up days obey the identical budget, session-floor and variety rules.
+ */
+export function extendRevision(
+  plan: StudyPlan,
+  profile: StudentProfile,
+  today: string = todayISO(),
+): StudyPlan {
+  const capacity = Math.max(profile.dailyMinutes, 45);
+  const pending = plan.sessions.filter((s) => !s.done);
+  const examDay = Math.max(dayDiff(today, profile.examDate), 0);
+
+  const practiceDays = pending
+    .filter((s) => s.kind === 'practice')
+    .map((s) => dayDiff(today, s.date))
+    .filter((d) => d >= 0);
+  const practiceStartDay = practiceDays.length > 0 ? Math.min(...practiceDays) : examDay;
+
+  const workDays = pending
+    .filter((s) => s.kind !== 'practice')
+    .map((s) => dayDiff(today, s.date));
+  const lastWorkDay = workDays.length > 0 ? Math.max(...workDays) : -1;
+
+  const from = Math.max(0, lastWorkDay + 1);
+  if (from >= practiceStartDay) return plan; // no gap to fill
+
+  const chapterMinutes = computeChapterMinutes(profile);
+  const sessions = [...plan.sessions];
+  let cursor = from;
+  while (cursor < practiceStartDay) {
+    const before = sessions.length;
+    cursor = fillDays(
+      sessions,
+      buildReviseQueues(profile, chapterMinutes),
+      'revise',
+      cursor,
+      practiceStartDay,
+      capacity,
+      today,
+    );
+    if (sessions.length === before) break; // nothing schedulable — avoid spinning
+  }
+  return { ...plan, sessions };
+}
+
+/**
+ * The single entry point screens should call before rendering a plan: catch up
+ * if behind, continue if ahead, and never leave an idle day before the exam.
+ */
+export function maintainPlan(
+  plan: StudyPlan,
+  profile: StudentProfile,
+  today: string = todayISO(),
+): StudyPlan {
+  const reflowed = planNeedsReflow(plan, today) ? reflowPlan(plan, profile, today) : plan;
+  return extendRevision(reflowed, profile, today);
+}
+
+/**
+ * Auto-repair: pull unfinished past sessions forward without guilt.
+ * Kept as the narrow "only act when overdue" contract; `maintainPlan` is the
+ * general entry point.
+ */
+export function repairPlan(plan: StudyPlan, profile: StudentProfile): StudyPlan {
+  const today = todayISO();
+  if (!plan.sessions.some((s) => !s.done && s.date < today)) return plan;
+  return reflowPlan(plan, profile, today);
 }

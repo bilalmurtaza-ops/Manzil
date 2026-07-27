@@ -28,7 +28,7 @@ import {
 import { parseBackup, summarize } from '../src/lib/backupSchema';
 import { requestBackup } from '../src/lib/backupScheduler';
 import { BackupError } from '../src/lib/cloudBackup';
-import { generatePlan, repairPlan } from '../src/lib/planEngine';
+import { generatePlan, maintainPlan } from '../src/lib/planEngine';
 import { isCloudConfigured } from '../src/lib/supabase';
 import type { ClassLevel, StudyGroup } from '../src/lib/types';
 import { useAppStore } from '../src/store/useAppStore';
@@ -172,7 +172,7 @@ export default function SettingsScreen() {
   const handleRepairPlan = () => {
     if (!plan || !profile) return;
     triggerHapticIfEnabled();
-    const repaired = repairPlan(plan, profile);
+    const repaired = maintainPlan(plan, profile);
     setPlan(repaired);
     setRepairNotice('Plan re-balanced for upcoming days!');
     setTimeout(() => setRepairNotice(null), 3000);

@@ -8,7 +8,14 @@ import { ChevronIcon, FlameIcon, LeafIcon, StarIcon } from '../../src/components
 import { ProgressRing } from '../../src/components/ProgressRing';
 import { Screen } from '../../src/components/Screen';
 import { SessionCard } from '../../src/components/SessionCard';
-import { daysUntil, repairPlan, todayISO } from '../../src/lib/planEngine';
+import {
+  daysAheadUsedToday,
+  daysUntil,
+  maintainPlan,
+  MAX_DAYS_AHEAD,
+  todayISO,
+  upcomingAheadDates,
+} from '../../src/lib/planEngine';
 import { computeStreak, useAppStore } from '../../src/store/useAppStore';
 import { color, font, radius, space, type } from '../../src/theme/tokens';
 
@@ -29,13 +36,16 @@ export default function TodayScreen() {
   const activeDays = useAppStore((s) => s.activeDays);
   const [repaired, setRepaired] = useState(false);
 
-  // Auto-repair: silently reflow missed sessions forward. No guilt spiral.
+  // Keep the calendar honest on mount: catch up missed work, and close any hole
+  // left by a day the student already worked through. No guilt spiral either way.
   useEffect(() => {
     if (!plan || !profile) return;
     const today = todayISO();
-    if (plan.sessions.some((s) => !s.done && s.date < today)) {
-      setPlan(repairPlan(plan, profile));
-      setRepaired(true);
+    const hadOverdue = plan.sessions.some((s) => !s.done && s.date < today);
+    const maintained = maintainPlan(plan, profile, today);
+    if (maintained !== plan) {
+      setPlan(maintained);
+      if (hadOverdue) setRepaired(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -46,11 +56,35 @@ export default function TodayScreen() {
     [plan, today],
   );
   const doneCount = todaySessions.filter((s) => s.done).length;
+  // The ring tracks the commitment the student actually signed up for today.
+  // Pulling extra days forward must not knock a finished 5/5 back to 5/10.
   const progress = todaySessions.length > 0 ? doneCount / todaySessions.length : 0;
   const streak = computeStreak(activeDays);
   const countdown = profile ? Math.max(daysUntil(profile.examDate), 0) : 0;
   const urduLine = URDU_LINES[new Date().getDate() % URDU_LINES.length];
   const allDone = todaySessions.length > 0 && doneCount === todaySessions.length;
+
+  // ---- Study ahead -------------------------------------------------------
+  const usedAhead = daysAheadUsedToday(plan, today);
+  const availableAhead = useMemo(
+    () => upcomingAheadDates(plan, today, MAX_DAYS_AHEAD),
+    [plan, today],
+  );
+  // Start already showing whatever was pulled forward earlier today, so closing
+  // and re-opening the app doesn't hide work the student already did.
+  const [revealed, setRevealed] = useState(0);
+  const revealedCount = Math.min(Math.max(revealed, usedAhead), availableAhead.length);
+  const aheadDays = availableAhead.slice(0, revealedCount).map((date, i) => ({
+    date,
+    offset: i + 1,
+    sessions: plan ? plan.sessions.filter((s) => s.date === date) : [],
+  }));
+  const aheadAllDone = aheadDays.every((d) => d.sessions.every((s) => s.done));
+  const atAheadLimit = usedAhead >= MAX_DAYS_AHEAD;
+  const canRevealMore = allDone && aheadAllDone && !atAheadLimit && revealedCount < availableAhead.length;
+
+  const aheadLabel = (offset: number) =>
+    offset === 1 ? 'Tomorrow · pulled forward' : `+${offset} days · pulled forward`;
 
   return (
     <Screen bleed>
@@ -165,7 +199,73 @@ export default function TodayScreen() {
           <Animated.View entering={FadeInDown.duration(400)} style={styles.doneCard}>
             <Text style={styles.doneUrdu}>شاباش!</Text>
             <Text style={styles.doneText}>
-              All sessions complete. Rest well — tomorrow's plan is ready.
+              {revealedCount > 0
+                ? "Today's plan is complete — everything below is extra."
+                : "All sessions complete. Rest well — tomorrow's plan is ready."}
+            </Text>
+          </Animated.View>
+        )}
+
+        {/* Pulled-forward days, each clearly separated from today's commitment. */}
+        {aheadDays.map((d) => (
+          <View key={d.date} style={styles.aheadGroup}>
+            <View style={styles.aheadHeaderRow}>
+              <View style={styles.aheadBadge}>
+                <Text style={styles.aheadBadgeText}>+{d.offset}</Text>
+              </View>
+              <Text style={styles.aheadHeader}>{aheadLabel(d.offset)}</Text>
+            </View>
+            {d.sessions.map((s, i) => (
+              <SessionCard
+                key={s.id}
+                session={s}
+                index={i}
+                onToggleDone={() => toggleSessionDone(s.id)}
+                onStart={() => router.push({ pathname: '/focus', params: { sessionId: s.id } })}
+              />
+            ))}
+          </View>
+        ))}
+
+        {canRevealMore && (
+          <Animated.View entering={FadeIn.duration(300)}>
+            <Pressable
+              style={styles.aheadCta}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                setRevealed(revealedCount + 1);
+              }}
+            >
+              <Text style={styles.aheadCtaText}>
+                {revealedCount === 0
+                  ? "Continue with tomorrow's lessons →"
+                  : `Continue with +${revealedCount + 1} days →`}
+              </Text>
+              <Text style={styles.aheadCtaSub}>
+                {MAX_DAYS_AHEAD - usedAhead} of {MAX_DAYS_AHEAD} days still available today
+              </Text>
+            </Pressable>
+          </Animated.View>
+        )}
+
+        {allDone && atAheadLimit && (
+          <Animated.View entering={FadeIn.duration(300)} style={styles.aheadLimitCard}>
+            <Text style={styles.aheadLimitTitle}>
+              You&apos;re {MAX_DAYS_AHEAD} days ahead — that&apos;s the limit.
+            </Text>
+            <Text style={styles.aheadLimitText}>
+              Rest now; it&apos;s part of the plan. Your calendar will pick up right where you left
+              off tomorrow.
+            </Text>
+          </Animated.View>
+        )}
+
+        {allDone && !atAheadLimit && !canRevealMore && availableAhead.length === 0 && (
+          <Animated.View entering={FadeIn.duration(300)} style={styles.aheadLimitCard}>
+            <Text style={styles.aheadLimitTitle}>Nothing left to pull forward.</Text>
+            <Text style={styles.aheadLimitText}>
+              You&apos;re at the end of your scheduled plan — revise flashcards in Practice to keep
+              the edge sharp.
             </Text>
           </Animated.View>
         )}
@@ -273,6 +373,48 @@ const styles = StyleSheet.create({
   },
   emptyTitle: { ...type.bodyMedium, color: color.ink },
   emptyText: { ...type.small, color: color.inkSoft, marginTop: 6, lineHeight: 19 },
+
+  aheadGroup: { marginTop: space.lg },
+  aheadHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 10,
+  },
+  aheadBadge: {
+    backgroundColor: color.greenSoft,
+    borderRadius: radius.full,
+    paddingHorizontal: 9,
+    paddingVertical: 3,
+  },
+  aheadBadgeText: { fontFamily: font.bold, fontSize: 11, color: color.greenDeep },
+  aheadHeader: {
+    fontFamily: font.semibold,
+    fontSize: 11,
+    letterSpacing: 1.1,
+    textTransform: 'uppercase',
+    color: color.greenMid,
+  },
+
+  aheadCta: {
+    alignItems: 'center',
+    backgroundColor: color.greenSoft,
+    borderRadius: radius.md,
+    paddingVertical: 14,
+    paddingHorizontal: space.lg,
+    marginTop: space.md,
+  },
+  aheadCtaText: { fontFamily: font.semibold, fontSize: 14, color: color.greenDeep },
+  aheadCtaSub: { ...type.small, color: color.inkSoft, marginTop: 3 },
+
+  aheadLimitCard: {
+    backgroundColor: color.cardWarm,
+    borderRadius: radius.md,
+    padding: space.lg,
+    marginTop: space.md,
+  },
+  aheadLimitTitle: { fontFamily: font.semibold, fontSize: 14, color: color.ink },
+  aheadLimitText: { ...type.small, color: color.inkSoft, marginTop: 5, lineHeight: 19 },
 
   doneCard: {
     alignItems: 'center',

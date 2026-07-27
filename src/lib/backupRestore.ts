@@ -2,7 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCloudStore } from '../store/useCloudStore';
 import { useAppStore, type BackedUpState } from '../store/useAppStore';
 import type { BackupEnvelope } from './backupSchema';
-import { repairPlan, todayISO } from './planEngine';
+import { maintainPlan, todayISO } from './planEngine';
 
 /**
  * Applying a restore to local state, plus the local safety net around it.
@@ -128,13 +128,14 @@ export async function applyEnvelope(envelope: BackupEnvelope): Promise<ApplyResu
 
   // 3. A restored plan is stale almost by definition — it was made on another day.
   //    today.tsx only repairs on mount, which has already happened by now.
+  //    A backup can also come from a device that worked ahead, so the plan may
+  //    contain holes as well as overdue work — maintainPlan handles both.
   let planRepaired = false;
   const { profile, plan } = useAppStore.getState();
   if (profile && plan) {
-    const today = todayISO();
-    const hasStale = plan.sessions.some((s) => !s.done && s.date < today);
-    if (hasStale) {
-      useAppStore.getState().setPlan(repairPlan(plan, profile));
+    const maintained = maintainPlan(plan, profile, todayISO());
+    if (maintained !== plan) {
+      useAppStore.getState().setPlan(maintained);
       planRepaired = true;
     }
   }

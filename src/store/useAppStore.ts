@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
+import { completedOn } from '../lib/planEngine';
 import type {
   ChatMessage,
   Flashcard,
@@ -98,7 +99,10 @@ export const useAppStore = create<AppState>()(
                 }
               : sess,
           );
-          const anyDoneToday = sessions.some((x) => x.done && x.date === todayISO());
+          // Streak credit follows when the work actually happened, not when it
+          // was scheduled — see completedOn() for why. Shared with the engine so
+          // the two can never drift apart.
+          const anyDoneToday = sessions.some((x) => completedOn(x) === todayISO());
           const activeDays = anyDoneToday
             ? Array.from(new Set([...s.activeDays, todayISO()]))
             : s.activeDays.filter((d) => d !== todayISO());
