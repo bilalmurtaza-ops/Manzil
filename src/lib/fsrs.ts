@@ -1,3 +1,4 @@
+import { localISO, todayISO } from './planEngine';
 import type { Flashcard } from './types';
 
 /**
@@ -23,10 +24,14 @@ const MAX_INTERVAL_DAYS = 60;
 // just-failed card would be rescheduled a full 60 days out instead of resurfacing soon.
 const LAPSE_STABILITY = 0.5;
 
+// Local date, not UTC: at UTC+5 a `toISOString()` slice returns yesterday for
+// any review done between midnight and 05:00, so a card scheduled "tomorrow"
+// would fall due the same night. Shares todayISO()'s definition of a day so the
+// review queue and the study plan can never disagree about what "today" is.
 const addDaysISO = (days: number): string => {
-  const d = new Date();
+  const d = new Date(`${todayISO()}T12:00:00`);
   d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
+  return localISO(d);
 };
 
 export function reviewCard(card: Flashcard, rating: Rating): Flashcard {

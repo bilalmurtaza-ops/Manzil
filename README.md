@@ -23,6 +23,14 @@ Over 500,000 students failed matric in 2025 — overwhelmingly not for lack of a
    ```
    EXPO_PUBLIC_GEMINI_API_KEY=your_key_here
    ```
+   Optionally add spare keys from other Google accounts. Each one is a separate
+   free-tier quota bucket, so Ustaad keeps answering after the first is spent:
+   ```
+   EXPO_PUBLIC_GEMINI_API_KEY_1=second_account_key
+   EXPO_PUBLIC_GEMINI_API_KEY_2=third_account_key
+   ```
+   Slots `_1` … `_10` are recognised. Settings → Data & Storage shows how many
+   the build actually picked up — check it after adding one.
 3. Run on your phone: `npx expo start` then scan the QR with Expo Go (Android).
 
 > Note: the API key ships inside the client for this contest build. A production release would proxy Gemini calls through a small server instead.

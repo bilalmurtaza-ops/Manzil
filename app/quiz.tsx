@@ -8,6 +8,7 @@ import { PrimaryButton } from '../src/components/PrimaryButton';
 import { ProgressRing } from '../src/components/ProgressRing';
 import { getChapter, getSubject } from '../src/data/syllabus';
 import { GeminiError, generateQuiz, type QuizQuestion } from '../src/lib/gemini';
+import { todayISO } from '../src/lib/planEngine';
 import { useAppStore } from '../src/store/useAppStore';
 import { color, font, radius, space, type } from '../src/theme/tokens';
 
@@ -35,7 +36,14 @@ export default function QuizScreen() {
   const [finished, setFinished] = useState(false);
 
   const load = async () => {
-    if (!profile || !subject || !chapter) return;
+    // Returning silently here left the screen on its spinner forever, because
+    // the render treats "no questions and no error" as still loading. Reachable
+    // by opening /quiz without params (a deep link, or going back to a stale
+    // route), so it needs a real error rather than an infinite wait.
+    if (!profile || !subject || !chapter) {
+      setError('That chapter could not be found. Pick a chapter from the Practice tab.');
+      return;
+    }
     setError(null);
     setQuestions(null);
     try {
@@ -72,7 +80,9 @@ export default function QuizScreen() {
           id: nextId(),
           subjectId: subject.id,
           chapterId: chapter.id,
-          date: new Date().toISOString().slice(0, 10),
+          // Local date: the store compares this against todayISO() to decide
+          // whether today counts toward the streak, so the two must agree.
+          date: todayISO(),
           total: questions.length,
           correct: correctCount,
         });

@@ -23,6 +23,7 @@ export const color = {
 
   // Signals
   gold: '#C9972E', // streaks, celebration
+  goldDeep: '#8B6914', // gold text ON goldSoft — `gold` itself is too light to read there
   goldSoft: '#F7EDD8',
   rust: '#B4552D', // risk / overdue
   rustSoft: '#F6E5DC',

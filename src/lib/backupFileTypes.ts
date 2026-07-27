@@ -26,5 +26,8 @@ export interface ExportOutcome {
 }
 
 export function backupFileName(): string {
-  return `manzil-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  // Local date so the filename matches the day the student thinks it is.
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `manzil-backup-${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}.json`;
 }

@@ -585,7 +585,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 4,
   },
-  marksText: { fontFamily: font.semibold, fontSize: 11, color: '#8B6914' },
+  marksText: { fontFamily: font.semibold, fontSize: 11, color: color.goldDeep },
 
   theoremTitle: {
     fontFamily: font.bold,

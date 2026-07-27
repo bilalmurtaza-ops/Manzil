@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
-import { completedOn } from '../lib/planEngine';
+import { completedOn, localISO, todayISO } from '../lib/planEngine';
 import type {
   ChatMessage,
   Flashcard,
@@ -70,7 +70,10 @@ export const BACKED_UP_KEYS = [
   'vibrationEnabled',
 ] as const satisfies readonly (keyof BackedUpState)[];
 
-const todayISO = () => new Date().toISOString().slice(0, 10);
+// NOTE: todayISO is imported from planEngine rather than redefined here. It used
+// to be a local `toISOString().slice(0,10)`, which reports UTC and so disagreed
+// with the plan engine about which day it was between midnight and 05:00 in
+// Pakistan.
 
 export const useAppStore = create<AppState>()(
   persist(
@@ -102,10 +105,17 @@ export const useAppStore = create<AppState>()(
           // Streak credit follows when the work actually happened, not when it
           // was scheduled — see completedOn() for why. Shared with the engine so
           // the two can never drift apart.
-          const anyDoneToday = sessions.some((x) => completedOn(x) === todayISO());
-          const activeDays = anyDoneToday
-            ? Array.from(new Set([...s.activeDays, todayISO()]))
-            : s.activeDays.filter((d) => d !== todayISO());
+          const today = todayISO();
+          const anyDoneToday = sessions.some((x) => completedOn(x) === today);
+          // A quiz also earns the day (see addQuizAttempt). Un-checking a session
+          // must not revoke credit this action never granted — without this
+          // check, finishing a quiz and then mis-tapping a session checkbox
+          // silently erased today from the streak.
+          const quizToday = s.quizAttempts.some((a) => a.date.slice(0, 10) === today);
+          const activeDays =
+            anyDoneToday || quizToday
+              ? Array.from(new Set([...s.activeDays, today]))
+              : s.activeDays.filter((d) => d !== today);
           return { plan: { ...s.plan, sessions }, activeDays };
         }),
 
@@ -161,11 +171,14 @@ export const useAppStore = create<AppState>()(
 /** Current streak: consecutive active days ending today or yesterday. */
 export function computeStreak(activeDays: string[]): number {
   const days = new Set(activeDays);
-  const d = new Date();
+  // Anchored at local noon so stepping back a day can never land on a DST seam,
+  // and read as a local date so it agrees with the dates stored in activeDays.
+  const d = new Date(`${todayISO()}T12:00:00`);
+  const iso = () => localISO(d);
   // Streak survives if yesterday was active even when today isn't yet.
-  if (!days.has(d.toISOString().slice(0, 10))) d.setDate(d.getDate() - 1);
+  if (!days.has(iso())) d.setDate(d.getDate() - 1);
   let streak = 0;
-  while (days.has(d.toISOString().slice(0, 10))) {
+  while (days.has(iso())) {
     streak += 1;
     d.setDate(d.getDate() - 1);
   }

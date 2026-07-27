@@ -28,6 +28,7 @@ import {
 import { parseBackup, summarize } from '../src/lib/backupSchema';
 import { requestBackup } from '../src/lib/backupScheduler';
 import { BackupError } from '../src/lib/cloudBackup';
+import { geminiKeyPool } from '../src/lib/gemini';
 import { generatePlan, maintainPlan } from '../src/lib/planEngine';
 import { isCloudConfigured } from '../src/lib/supabase';
 import type { ClassLevel, StudyGroup } from '../src/lib/types';
@@ -127,34 +128,66 @@ export default function SettingsScreen() {
     setTimeout(() => setProfileNotice(null), 3000);
   };
 
+  /**
+   * Switching class or group necessarily rebuilds the plan — the two syllabi
+   * share almost no chapter IDs, so completed work cannot carry across. That
+   * makes it a genuinely destructive action, and it used to fire on a single
+   * tap with no warning: one stray tap during judging erased every completed
+   * session. Confirm first, naming exactly what is lost, using the same
+   * Alert/window.confirm pattern as Erase All Data.
+   */
+  const confirmRegenerate = (what: string, apply: () => void) => {
+    const doneCount = plan ? plan.sessions.filter((s) => s.done).length : 0;
+    if (doneCount === 0) {
+      apply();
+      return;
+    }
+    const body =
+      `Changing your ${what} rebuilds the study plan from the new syllabus. ` +
+      `${doneCount} completed session${doneCount === 1 ? '' : 's'} will be cleared, ` +
+      'and your readiness score resets.';
+    if (Platform.OS === 'web') {
+      if (window.confirm(body)) apply();
+      return;
+    }
+    Alert.alert('Rebuild your plan?', body, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Rebuild plan', style: 'destructive', onPress: apply },
+    ]);
+  };
+
   // 2. Change Class Level (9 vs 10) — updates store & regenerates study plan
   const handleSelectClass = (newClass: ClassLevel) => {
     if (!profile || profile.classLevel === newClass) return;
     triggerHapticIfEnabled();
-    const newProfile = { ...profile, classLevel: newClass };
-    setProfile(newProfile);
-    // Re-run plan generator so the calendar plan uses the new class's syllabus dataset
-    setPlan(generatePlan(newProfile));
-    setProfileNotice(`Switched to Class ${newClass}! Study plan & subjects regenerated.`);
-    setTimeout(() => setProfileNotice(null), 3500);
+    confirmRegenerate('class level', () => {
+      const newProfile = { ...profile, classLevel: newClass };
+      setProfile(newProfile);
+      // Re-run plan generator so the calendar plan uses the new class's syllabus dataset
+      setPlan(generatePlan(newProfile));
+      setProfileNotice(`Switched to Class ${newClass}! Study plan & subjects regenerated.`);
+      setTimeout(() => setProfileNotice(null), 3500);
+    });
   };
 
   // 3. Change Study Group (Bio vs CS vs Arts) — updates store & regenerates study plan
   const handleSelectGroup = (newGroup: StudyGroup) => {
     if (!profile || profile.group === newGroup) return;
     triggerHapticIfEnabled();
-    const newProfile = { ...profile, group: newGroup };
-    setProfile(newProfile);
-    // Re-run plan generator so the calendar plan uses the new group's subject list
-    setPlan(generatePlan(newProfile));
-    const label =
-      newGroup === 'science-bio'
-        ? 'Biology'
-        : newGroup === 'science-cs'
-        ? 'Computer Science'
-        : 'Arts';
-    setProfileNotice(`Switched to ${label} group! Study plan & subjects regenerated.`);
-    setTimeout(() => setProfileNotice(null), 3500);
+    confirmRegenerate('study group', () => {
+      const newProfile = { ...profile, group: newGroup };
+      setProfile(newProfile);
+      // Re-run plan generator so the calendar plan uses the new group's subject list
+      setPlan(generatePlan(newProfile));
+      const label =
+        newGroup === 'science-bio'
+          ? 'Biology'
+          : newGroup === 'science-cs'
+          ? 'Computer Science'
+          : 'Arts';
+      setProfileNotice(`Switched to ${label} group! Study plan & subjects regenerated.`);
+      setTimeout(() => setProfileNotice(null), 3500);
+    });
   };
 
   // 4. Change BISE Board — updates store & Ustaad AI context
@@ -205,6 +238,10 @@ export default function SettingsScreen() {
       { text: 'Erase everything', style: 'destructive', onPress: doReset },
     ]);
   };
+
+  // Fixed for the lifetime of the build — the pool is resolved from inlined
+  // env values at module load, so there is nothing to subscribe to.
+  const keyPool = geminiKeyPool();
 
   const backupMeta = () => ({
     appVersion: Constants.expoConfig?.version ?? '',
@@ -663,9 +700,21 @@ export default function SettingsScreen() {
               <Text style={styles.infoLabel}>Flashcards Created</Text>
               <Text style={styles.infoValue}>{flashcards.length}</Text>
             </View>
-            <View style={[styles.infoRow, { borderBottomWidth: 0 }]}>
+            <View style={styles.infoRow}>
               <Text style={styles.infoLabel}>Ustaad Messages</Text>
               <Text style={styles.infoValue}>{chatHistory.length}</Text>
+            </View>
+            {/* Key slots are inlined at build time, so a key that was added to
+                .env or the expo.dev secrets but never picked up would otherwise
+                be completely invisible — it would simply never get used. This
+                row is how you can tell the difference. */}
+            <View style={[styles.infoRow, { borderBottomWidth: 0 }]}>
+              <Text style={styles.infoLabel}>Ustaad AI Keys</Text>
+              <Text style={styles.infoValue}>
+                {keyPool.total === 0
+                  ? 'None configured'
+                  : `${keyPool.total} ${keyPool.total === 1 ? 'key' : 'keys'}`}
+              </Text>
             </View>
 
             {chatClearedNotice && (

@@ -353,7 +353,15 @@ console.log('='.repeat(96));
   const today = '2026-01-05';
 
   // A lesson pulled forward: scheduled for the 8th, actually studied on the 5th.
-  const pulledForward = { ...base, done: true, doneAt: `${today}T21:30:00.000Z` };
+  // doneAt is built from a LOCAL time on the 5th and then serialised, exactly as
+  // the store does it. Hardcoding a `...T21:30:00.000Z` literal instead used to
+  // pass only because completedOn sliced the UTC date — at UTC+5 that instant is
+  // already 02:30 on the 6th, so the literal described the wrong day.
+  const pulledForward = {
+    ...base,
+    done: true,
+    doneAt: new Date(`${today}T21:30:00`).toISOString(),
+  };
   check('a pulled-forward lesson credits the day it was studied',
     engineCompletedOn(pulledForward) === today, `${engineCompletedOn(pulledForward)}`);
   check('the old date-based rule would NOT have credited it — the bug this fixes',

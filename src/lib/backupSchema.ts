@@ -155,7 +155,12 @@ function validateSession(v: unknown): PlanSession | null {
     kind: v.kind as PlanSession['kind'],
     minutes: clamp(Math.round(v.minutes), 1, 600),
     done: v.done === true,
-    ...(isStr(v.doneAt) ? { doneAt: v.doneAt } : {}),
+    // doneAt drives streak credit and the study-ahead counter, so an
+    // unparseable value must be dropped rather than carried into the store.
+    // Dropping it is safe: completedOn() falls back to the scheduled date.
+    ...(isStr(v.doneAt) && !Number.isNaN(new Date(v.doneAt).getTime())
+      ? { doneAt: v.doneAt }
+      : {}),
   };
 }
 

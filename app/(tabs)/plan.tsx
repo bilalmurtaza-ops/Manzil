@@ -4,7 +4,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { Screen } from '../../src/components/Screen';
 import { getChapter, getSubject } from '../../src/data/syllabus';
-import { daysUntil, generatePlan, todayISO } from '../../src/lib/planEngine';
+import { daysUntil, generatePlan, localISO, rebalancePlan, todayISO } from '../../src/lib/planEngine';
 import { STUDY_TIME_MINUTES } from '../../src/lib/studyTime';
 import type { PlanSession } from '../../src/lib/types';
 import { useAppStore } from '../../src/store/useAppStore';
@@ -22,9 +22,9 @@ function dayLabel(iso: string): string {
   const today = todayISO();
   if (iso === today) return 'Today';
   const d = new Date(`${iso}T12:00:00`);
-  const tomorrow = new Date();
+  const tomorrow = new Date(`${today}T12:00:00`);
   tomorrow.setDate(tomorrow.getDate() + 1);
-  if (iso === tomorrow.toISOString().slice(0, 10)) return 'Tomorrow';
+  if (iso === localISO(tomorrow)) return 'Tomorrow';
   return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
 }
 
@@ -64,7 +64,11 @@ export default function PlanScreen() {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     const updated = { ...profile, dailyMinutes: minutes };
     setProfile(updated);
-    setPlan(generatePlan(updated));
+    // Re-spread what's left at the new pace rather than regenerating: a fresh
+    // generatePlan() would apply the new daily time correctly but wipe every
+    // completed session, undoing the student's whole first pass and resetting
+    // readiness to zero just for tapping a different time chip.
+    setPlan(plan ? rebalancePlan(plan, updated) : generatePlan(updated));
     setShowRebalance(false);
   };
 

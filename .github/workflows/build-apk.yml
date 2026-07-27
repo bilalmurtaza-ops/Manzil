@@ -14,8 +14,11 @@
 #        Name:  EXPO_TOKEN
 #        Value: an Expo access token from https://expo.dev/settings/access-tokens
 #      (EXPO_TOKEN lets the runner fetch your signing credentials AND the
-#       EXPO_PUBLIC_GEMINI_API_KEY stored in your EAS "preview" environment, so the
-#       AI features work in the built APK — no separate key secret is needed.)
+#       EXPO_PUBLIC_GEMINI_API_KEY* values stored in your EAS "preview" environment,
+#       so the AI features work in the built APK — no separate key secret is needed.
+#       If you use spare keys (EXPO_PUBLIC_GEMINI_API_KEY_1 … _10), add each one to
+#       that EAS environment too — the APK only sees the keys defined there, and a
+#       missing one is silent. Settings -> Data & Storage shows the resolved count.)
 #   3. Repo → Actions tab → "Build APK (local, no EAS queue)" → Run workflow.
 #   4. When it finishes, open the run → Artifacts → download "manzil-apk".
 

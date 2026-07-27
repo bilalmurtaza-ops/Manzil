@@ -1,4 +1,4 @@
-import { subjectsForProfile } from '../data/syllabus';
+import { subjectsForProfile, type Subject } from '../data/syllabus';
 import type { PlanSession, StudentProfile, StudyPlan } from './types';
 
 /**
@@ -20,6 +20,10 @@ import type { PlanSession, StudentProfile, StudyPlan } from './types';
 const SESSION_MAX = 60; // minutes per focused block
 const SESSION_MIN = 20;
 const MAX_SUBJECTS_PER_DAY = 3;
+/** Revision blocks are built shorter than a first-pass block — see buildReviseQueues. */
+const REVISE_BLOCK_MAX = 45;
+/** Past-paper drills use the same shorter block, so a day tiles the full target. */
+const PRACTICE_BLOCK_MAX = 45;
 
 interface Block {
   subjectId: string;
@@ -27,13 +31,41 @@ interface Block {
   minutes: number;
 }
 
+/**
+ * Format a Date as yyyy-mm-dd in the device's OWN timezone.
+ *
+ * Deliberately hand-rolled instead of `toLocaleDateString('en-CA')`: Hermes
+ * ships only partial Intl support, and a locale it doesn't honour would return
+ * something like `27/07/2026`. Every date in this app is compared as a string,
+ * so that failure mode would silently break the plan, the streak and the review
+ * queue at once — on device only, where it is hardest to spot. Explicit getters
+ * have no Intl dependency and cannot drift.
+ */
+export const localISO = (d: Date): string =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
 const addDays = (iso: string, n: number): string => {
+  // Anchored at local noon so a DST shift can never move the result to an
+  // adjacent day, and read back as a LOCAL date — reading it as UTC made
+  // addDays(todayISO(), 0) return a different day from todayISO() itself in any
+  // timezone at or beyond UTC+12.
   const d = new Date(`${iso}T12:00:00`);
   d.setDate(d.getDate() + n);
-  return d.toISOString().slice(0, 10);
+  return localISO(d);
 };
 
-export const todayISO = (): string => new Date().toISOString().slice(0, 10);
+/**
+ * Today's date in the DEVICE'S OWN timezone.
+ *
+ * `toISOString()` reports UTC, and Pakistan is UTC+5 — so between midnight and
+ * 05:00 local it returns *yesterday*. A student revising at 1 AM had the work
+ * credited to the previous day, the exam countdown read a day long, and a card
+ * scheduled "tomorrow" came due the same night. Formatting the local date
+ * directly removes the skew for every timezone, not just PKT.
+ *
+ * See localISO for why this is hand-rolled rather than locale-formatted.
+ */
+export const todayISO = (): string => localISO(new Date());
 
 export function daysUntil(dateISO: string): number {
   const ms =
@@ -94,6 +126,13 @@ function fillDays(
   dailyLoad: number,
   /** Day 0. Injectable so plan maintenance can run on a simulated clock. */
   baseDate: string = todayISO(),
+  /**
+   * Longest block this queue's content may be emitted as. Must match the cap the
+   * queue was built with, because the remainder-merge below can otherwise grow a
+   * block past it — measured at 78 minutes for a 60-minute cap before this
+   * existed.
+   */
+  blockCap: number = SESSION_MAX,
 ): number {
   let day = startDay;
   while (day < endDay) {
@@ -169,7 +208,23 @@ function fillDays(
           // block rather than either emitting a 5-minute stub or dropping content.
           queue.shift();
           if (queue.length > 0) {
-            queue[0] = { ...queue[0], minutes: queue[0].minutes + rest };
+            const merged = queue[0].minutes + rest;
+            if (merged > blockCap && merged >= 2 * SESSION_MIN) {
+              // Merging wholesale would produce a block longer than a focused
+              // session — 60 + 19 = 79 minutes in the worst measured case, which
+              // contradicts SESSION_MAX and the focus timer's design. Re-split
+              // into two real blocks so content is still never dropped and no
+              // stub is created.
+              const first = Math.ceil(merged / 2);
+              queue.splice(
+                0,
+                1,
+                { ...queue[0], minutes: first },
+                { ...queue[0], minutes: merged - first },
+              );
+            } else {
+              queue[0] = { ...queue[0], minutes: merged };
+            }
           } else {
             queue.push({ ...block, minutes: rest });
           }
@@ -238,7 +293,10 @@ function buildReviseQueues(
 
 export function generatePlan(profile: StudentProfile): StudyPlan {
   const subjects = subjectsForProfile(profile.classLevel, profile.group);
-  const totalDays = Math.max(daysUntil(profile.examDate) - 1, 3);
+  // Never plan past the exam. The old `max(..., 3)` floor guaranteed three days
+  // of sessions even when only one remained, so a student who onboarded the day
+  // before their first paper got work scheduled *after* it had already started.
+  const totalDays = Math.max(daysUntil(profile.examDate) - 1, 1);
   const capacity = Math.max(profile.dailyMinutes, 45);
 
   // ---- Build the study queues (first pass over every examined chapter).
@@ -250,7 +308,11 @@ export function generatePlan(profile: StudentProfile): StudyPlan {
   // Phase boundaries.
   const studyDaysTarget = Math.max(Math.round(totalDays * 0.62), 1);
   const practiceDays = Math.min(Math.max(Math.round(totalDays * 0.12), 2), 14);
-  const practiceStart = totalDays - practiceDays;
+  // At least one day of first-pass study always survives: on a 1-2 day runway the
+  // practice window would otherwise swallow the whole plan (a negative
+  // practiceStart), leaving a student with drills for chapters they never read
+  // and a readiness score permanently stuck at zero.
+  const practiceStart = Math.max(totalDays - practiceDays, 1);
 
   // Compress content only when even a full-capacity first pass wouldn't fit in the
   // study window; otherwise keep every chapter's full estimate.
@@ -277,9 +339,38 @@ export function generatePlan(profile: StudentProfile): StudyPlan {
    */
   const blockMax = Math.min(SESSION_MAX, Math.max(SESSION_MIN, Math.floor(studyDailyLoad / 2)));
 
+  /**
+   * Will the compressed first pass actually fit in the study window?
+   *
+   * `scale` alone can't answer this: splitBlocks floors every chapter at
+   * SESSION_MIN, so on a very short runway 95 chapters cost 95 * 20 minutes no
+   * matter how small `scale` gets. When the real total overruns the window,
+   * fillDays simply stops at practiceStart and the leftover chapters are never
+   * studied at all.
+   *
+   * That truncation is unavoidable for a student who onboards days before the
+   * exam — but WHICH chapters get dropped is a choice. In syllabus order it
+   * silently favours chapter 1 of the first subjects; measured at a 3-day
+   * runway, only 3 of 32 heavy chapters survived while low-weight early
+   * chapters did. Under triage the order flips to heaviest-first so the
+   * chapters carrying the most board marks are the ones that make the cut.
+   * Full-runway plans keep textbook order, which matters for subjects that
+   * genuinely build on earlier chapters.
+   */
+  let queuedTotal = 0;
+  for (const base of chapterMinutes.values()) {
+    queuedTotal += Math.max(Math.round(base * scale), SESSION_MIN);
+  }
+  const mustTriage = queuedTotal > practiceStart * capacity;
+
   for (const subject of subjects) {
     const queue: Block[] = [];
-    for (const chapter of subject.chapters[profile.classLevel]) {
+    const chapters = mustTriage
+      ? [...subject.chapters[profile.classLevel]].sort(
+          (a, b) => b.weight - a.weight || a.no - b.no,
+        )
+      : subject.chapters[profile.classLevel];
+    for (const chapter of chapters) {
       const base = chapterMinutes.get(chapter.id);
       if (!base) continue;
       const minutes = Math.round(base * scale);
@@ -291,7 +382,16 @@ export function generatePlan(profile: StudentProfile): StudyPlan {
   }
 
   const sessions: PlanSession[] = [];
-  const afterStudy = fillDays(sessions, studyQueues, 'study', 0, practiceStart, studyDailyLoad);
+  const afterStudy = fillDays(
+    sessions,
+    studyQueues,
+    'study',
+    0,
+    practiceStart,
+    studyDailyLoad,
+    todayISO(),
+    blockMax,
+  );
 
   // Revision repeats until the practice phase starts. The old hard `cycles < 6`
   // cap was safe only because the study pass was throttled to ~90 min/day and so
@@ -308,6 +408,8 @@ export function generatePlan(profile: StudentProfile): StudyPlan {
       cursor,
       practiceStart,
       capacity,
+      todayISO(),
+      REVISE_BLOCK_MAX,
     );
     if (sessions.length === before) break; // nothing schedulable — avoid spinning
   }
@@ -318,17 +420,26 @@ export function generatePlan(profile: StudentProfile): StudyPlan {
   // Tile the student's whole capacity with real focused blocks. A previous
   // fixed eight-block guard silently capped this phase at 360 minutes, so a
   // 7-hour plan promised 420 minutes but scheduled only 360.
-  const practiceBlocks = splitBlocks(capacity, 45);
-  const practiceSubjects = subjects.filter((subject) =>
-    subject.chapters[profile.classLevel].some((chapter) => chapter.weight >= 3),
-  );
-  for (let day = Math.max(practiceStart, afterStudy); day < totalDays; day++) {
+  const practiceBlocks = splitBlocks(capacity, PRACTICE_BLOCK_MAX);
+  // Fall back to weight>=2 and then to every chapter, so a syllabus edit that
+  // leaves a group without any heavy chapter degrades to a thinner practice
+  // phase instead of dividing by a zero-length array and crashing the screen.
+  const drillable = (subject: Subject, min: number) =>
+    subject.chapters[profile.classLevel].filter((c) => c.weight >= min);
+  const practiceSubjects =
+    subjects.filter((s) => drillable(s, 3).length > 0).length > 0
+      ? subjects.filter((s) => drillable(s, 3).length > 0)
+      : subjects.filter((s) => s.chapters[profile.classLevel].length > 0);
+
+  for (let day = Math.max(practiceStart, afterStudy); day < totalDays && practiceSubjects.length > 0; day++) {
     const date = addDays(todayISO(), day);
     let i = day;
     for (let blockIndex = 0; blockIndex < practiceBlocks.length; blockIndex++) {
       const subject = practiceSubjects[i % practiceSubjects.length];
       i += 1;
-      const chapters = subject.chapters[profile.classLevel].filter((c) => c.weight >= 3);
+      const heavy = drillable(subject, 3);
+      const chapters = heavy.length > 0 ? heavy : subject.chapters[profile.classLevel];
+      if (chapters.length === 0) continue;
       const chapter = chapters[(day + blockIndex + 1) % chapters.length];
       sessions.push({
         id: nextId(),
@@ -366,8 +477,21 @@ const dayDiff = (fromISO: string, toISO: string): number =>
  * completed earlier. `?? s.date` keeps older/restored sessions (done, but with
  * no `doneAt` recorded) behaving exactly as they did before.
  */
-export const completedOn = (s: PlanSession): string | null =>
-  s.done ? (s.doneAt?.slice(0, 10) ?? s.date) : null;
+export const completedOn = (s: PlanSession): string | null => {
+  if (!s.done) return null;
+  const at = s.doneAt;
+  if (!at) return s.date;
+  // `doneAt` is a UTC instant (`new Date().toISOString()`). Slicing its first 10
+  // characters yields the UTC date, which is NOT the day the student experienced
+  // — at UTC+5 anything done before 05:00 local reports as yesterday, so a 1 AM
+  // session would not count as completed today. Parse the instant and render it
+  // in local time instead.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(at)) return at; // already a plain local date
+  const d = new Date(at);
+  // A restored backup may carry anything here — backupSchema only checks that
+  // doneAt is a string — so an unparseable value must fall back, not propagate.
+  return Number.isNaN(d.getTime()) ? s.date : localISO(d);
+};
 
 /** Most days a student may pull forward in a single day. */
 export const MAX_DAYS_AHEAD = 3;
@@ -462,20 +586,36 @@ export function reflowPlan(
   const budgetFor = (date: string) => capacity - (anchoredByDate.get(date) ?? 0);
 
   const examDay = Math.max(dayDiff(today, profile.examDate), 0);
+  /**
+   * Once the exam date is behind us the plan's premise is gone, and the two
+   * exam-anchored rules invert from helpful to harmful: `examDay` collapses to 0
+   * so no day is ever skipped, and the clamp pins every outstanding session onto
+   * a date in the *past*. Measured result: 35 sessions permanently overdue,
+   * unreachable, with Today showing "Nothing scheduled" forever.
+   *
+   * So when the exam has passed, drop both rules — lay the remaining work out
+   * from today at normal capacity. The horizon keeps termination guaranteed
+   * without pretending a past date is a deadline.
+   */
+  const examPassed = dayDiff(today, profile.examDate) < 0;
+  const horizon = examPassed ? movable.length + 1 : examDay;
   const ordered = [...movable].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 
   const reflowed: PlanSession[] = [];
   let day = 0;
   let left = budgetFor(today);
   for (const session of ordered) {
-    // Skip past days already spoken for by anchored drills. Bounded by the exam
-    // date so this always terminates even if a day has no room at all.
-    while (session.minutes > left && day < examDay) {
+    // Skip past days already spoken for by anchored drills. Bounded so this
+    // always terminates even if a day has no room at all.
+    while (session.minutes > left && day < horizon) {
       day += 1;
       left = budgetFor(addDays(today, day));
     }
     const date = addDays(today, day);
-    reflowed.push({ ...session, date: date > profile.examDate ? profile.examDate : date });
+    reflowed.push({
+      ...session,
+      date: !examPassed && date > profile.examDate ? profile.examDate : date,
+    });
     left -= session.minutes;
   }
 
@@ -528,6 +668,7 @@ export function extendRevision(
       practiceStartDay,
       capacity,
       today,
+      REVISE_BLOCK_MAX,
     );
     if (sessions.length === before) break; // nothing schedulable — avoid spinning
   }
@@ -545,6 +686,73 @@ export function maintainPlan(
 ): StudyPlan {
   const reflowed = planNeedsReflow(plan, today) ? reflowPlan(plan, profile, today) : plan;
   return extendRevision(reflowed, profile, today);
+}
+
+/**
+ * Re-spread all outstanding work at the profile's *current* daily capacity,
+ * unconditionally.
+ *
+ * `maintainPlan` deliberately leaves an ordinary day alone — pending work today
+ * means nothing is wrong. But that is exactly the state a student is in when
+ * they change their study time, so maintenance would silently ignore the change
+ * and leave tomorrow still holding yesterday's 420-minute days.
+ *
+ * The alternative the app used to take — regenerate from scratch — applies the
+ * new pace correctly but throws away every completed session, resetting the
+ * student's first pass and their readiness score to zero. Reflowing keeps
+ * history untouched and re-lays only what is still pending, which is what
+ * "I want to study more/less per day from now on" actually means.
+ */
+export function rebalancePlan(
+  plan: StudyPlan,
+  profile: StudentProfile,
+  today: string = todayISO(),
+): StudyPlan {
+  const capacity = Math.max(profile.dailyMinutes, 45);
+  const retiled = { ...plan, sessions: retilePractice(plan.sessions, capacity, today) };
+  return extendRevision(reflowPlan(retiled, profile, today), profile, today);
+}
+
+/**
+ * Re-tile upcoming past-paper days to a new daily capacity.
+ *
+ * The practice phase is the one part of the plan with no content queue behind
+ * it — its block count is purely a function of capacity (`splitBlocks(capacity,
+ * …)` in the generator). Because `reflowPlan` anchors future drills to their
+ * generated dates and never re-budgets them, a student who dropped from 7 hours
+ * to 2 was left with 420-minute drill days sitting near the exam, breaking the
+ * one promise the engine makes about never exceeding the daily limit.
+ *
+ * Only *pending, future* drills are touched: completed ones are history, and
+ * overdue ones are handled by the normal catch-up path.
+ */
+function retilePractice(sessions: PlanSession[], capacity: number, today: string): PlanSession[] {
+  const targets = splitBlocks(capacity, PRACTICE_BLOCK_MAX);
+  const byDate = new Map<string, PlanSession[]>();
+  for (const s of sessions) {
+    if (s.kind !== 'practice' || s.done || s.date < today) continue;
+    const list = byDate.get(s.date) ?? [];
+    list.push(s);
+    byDate.set(s.date, list);
+  }
+  if (byDate.size === 0) return sessions;
+
+  const replaced = new Set<string>();
+  const added: PlanSession[] = [];
+  for (const [, list] of byDate) {
+    for (const s of list) replaced.add(s.id);
+    // Reuse the day's existing subject/chapter rotation so variety survives;
+    // cycle it when the new capacity needs more blocks than the old one had.
+    targets.forEach((minutes, i) => {
+      const src = list[i % list.length];
+      added.push({
+        ...src,
+        id: i < list.length ? list[i].id : `${src.id}-r${i}`,
+        minutes,
+      });
+    });
+  }
+  return [...sessions.filter((s) => !replaced.has(s.id)), ...added];
 }
 
 /**

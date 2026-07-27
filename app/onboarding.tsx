@@ -16,7 +16,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PrimaryButton } from '../src/components/PrimaryButton';
 import { BOARDS } from '../src/data/boards';
 import { subjectsForProfile } from '../src/data/syllabus';
-import { generatePlan, todayISO } from '../src/lib/planEngine';
+import { generatePlan, localISO, todayISO } from '../src/lib/planEngine';
 import { STUDY_TIME_OPTIONS } from '../src/lib/studyTime';
 import type { ClassLevel, StudentProfile, StudyGroup } from '../src/lib/types';
 import { useAppStore } from '../src/store/useAppStore';
@@ -39,9 +39,11 @@ function defaultExamDate(classLevel: ClassLevel): string {
 }
 
 function shiftDate(iso: string, days: number): string {
+  // Local noon in, local date out — matches planEngine's addDays so the exam
+  // date the student picks is the exam date the engine plans against.
   const d = new Date(`${iso}T12:00:00`);
   d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
+  return localISO(d);
 }
 
 // Exam date must stay in the future — the plan engine needs at least a few days of runway,
