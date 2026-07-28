@@ -8,7 +8,7 @@
       "distribution": "internal",
       "environment": "preview",
       "android": {
-        "buildType": "apk"
+        "gradleCommand": ":app:assembleRelease -x bundleReleaseLocalLintAar -x lintAnalyzeRelease"
       }
     },
     "production": {

@@ -30,6 +30,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Hard cap: if ninja hangs (pipe deadlock with react-native-worklets C++ build)
+    # the job fails loudly in 60 min instead of silently burning the 6-hour GH limit.
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -61,6 +64,22 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-deps-
 
+      # Cache the CMake/ninja intermediate outputs for react-native-worklets and
+      # react-native-reanimated. These are the C++ libraries that cause the ninja
+      # pipe-deadlock on the first cold build. Caching the .cxx directory means
+      # subsequent runs skip the expensive cmake configure + ninja compile phases
+      # entirely, dramatically reducing build time and eliminating the hang window.
+      # Keyed on package-lock.json so any package version change busts the cache.
+      - name: Cache CMake/ninja C++ build outputs
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches/transforms-3
+            ~/.gradle/caches/build-cache-1
+          key: ${{ runner.os }}-gradle-build-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-build-
+
       - name: Install dependencies
         run: npm ci # respects .npmrc (legacy-peer-deps=true)
 
@@ -68,6 +87,21 @@ jobs:
         run: npx eas-cli build --platform android --profile preview --local --non-interactive --output ${{ github.workspace }}/manzil.apk
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          # ── Gradle JVM / daemon settings ──────────────────────────────────────
+          # --no-daemon: prevents the Gradle daemon from holding the pipe open
+          #   after a ninja subprocess write fills the OS pipe buffer — the
+          #   root cause of the "Could not read standard output of ninja" hang.
+          # workers.max=2: matches the GH runner's 2 vCPUs; prevents memory
+          #   exhaustion from over-parallelising native C++ compilation.
+          # -Xmx4g: gives the JVM enough heap to drain ninja's stdout pipe
+          #   without blocking; default 512m is too small for the worklets build.
+          # -Dfile.encoding=UTF-8: avoids rare charset errors in ninja log output.
+          GRADLE_OPTS: >-
+            -Dorg.gradle.daemon=false
+            -Dorg.gradle.workers.max=2
+            -Xmx4g
+            -XX:MaxMetaspaceSize=512m
+            -Dfile.encoding=UTF-8
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
