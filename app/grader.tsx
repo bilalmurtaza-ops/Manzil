@@ -15,12 +15,26 @@ import { PracticeIcon } from '../src/components/icons';
 import { PrimaryButton } from '../src/components/PrimaryButton';
 import { ProgressRing } from '../src/components/ProgressRing';
 import { subjectsForProfile } from '../src/data/syllabus';
-import { GeminiError, gradeAnswer, type AnswerGrade } from '../src/lib/gemini';
+import {
+  GeminiError,
+  gradeAnswer,
+  questionBandLabel,
+  type AnswerGrade,
+} from '../src/lib/gemini';
 import { pickImage } from '../src/lib/images';
 import { useAppStore } from '../src/store/useAppStore';
 import { color, font, radius, space, subjectColor, type } from '../src/theme/tokens';
 
-const MARK_OPTIONS = [3, 5, 8];
+/**
+ * Punjab BISE matric answer sizes. There is no 3-mark question in this paper
+ * pattern — short questions carry 2 — so the old [3, 5, 8] row offered a size
+ * that does not exist and omitted the two that do.
+ *
+ * `gradeAnswer` bands these by RANGE rather than exact value, so this list can
+ * change without touching the AI layer; only the wording a student sees comes
+ * back from there, via `questionBandLabel`.
+ */
+const MARK_OPTIONS = [2, 5, 8, 10];
 
 export default function GraderScreen() {
   const router = useRouter();
@@ -123,11 +137,19 @@ export default function GraderScreen() {
                   }}
                 >
                   <Text style={[styles.markText, marks === m && { color: color.paperOnDark }]}>
-                    {m} marks
+                    {m}
                   </Text>
                 </Pressable>
               ))}
             </View>
+            {/* The word "marks" lives here rather than inside each chip: at four
+                options the chips are flex:1, and "10 marks" does not fit on a
+                360dp phone. The band name is read from the AI layer so the
+                student is told exactly what the examiner has been briefed to
+                expect. */}
+            <Text style={styles.markCaption}>
+              {marks} marks · {questionBandLabel(marks)}
+            </Text>
 
             <View style={{ gap: 10, marginTop: space.xl }}>
               <PrimaryButton
@@ -252,6 +274,7 @@ const styles = StyleSheet.create({
   },
   markChipActive: { backgroundColor: color.green, borderColor: color.green },
   markText: { ...type.smallMedium, color: color.inkSoft },
+  markCaption: { ...type.small, color: color.inkFaint, marginTop: 8 },
 
   hint: { ...type.small, color: color.inkFaint, marginTop: 10, textAlign: 'center' },
   errorCard: {
