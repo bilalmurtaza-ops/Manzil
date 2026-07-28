@@ -620,15 +620,16 @@ export default function SettingsScreen() {
             <View style={styles.divider} />
 
             <Text style={styles.bioText}>
-              From childhood, I have been deeply fascinated by computers and software. I've always
-              loved diving deep into these machines — understanding how they work, how they are
-              engineered from the ground up, and spending my free time exploring, learning, and
-              creating new technology.
+              What pulled me into software was never using it — it was wanting to know what sat
+              underneath. Most of what I know is self-taught, the slow way: take something apart,
+              break it, work out why.
             </Text>
             <Text style={[styles.bioText, { marginTop: 10 }]}>
-              Manzil was crafted with that exact passion with the help of AI to give Pakistani
-              matriculation students a world-class, offline-first study planner that truly respects
-              their syllabus and board pairing scheme.
+              Manzil comes from a gap I kept noticing. Matric students are handed a syllabus and a
+              pairing scheme, then left to turn the two into an actual plan on their own. So the plan
+              is what I built — it weights every chapter the way the board’s own scheme does, needs no
+              account and no signal, and carries on working through load-shedding. Built with AI as a
+              working partner, for the phones and the connections students here actually have.
             </Text>
           </View>
 
