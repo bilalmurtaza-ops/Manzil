@@ -69,6 +69,12 @@ const FAILURE_CUE: Record<CalibrationFailure, VoiceCueId> = {
   'too-restless': 'calibration-too-restless',
 };
 
+/**
+ * States in which the camera can genuinely see the student. Returning to one of
+ * these from `away` is a real return; drifting into `uncertain` is not.
+ */
+const SEEING_STATES = new Set<FocusState>(['focused', 'glance', 'distracted', 'drowsy']);
+
 export interface CueInput {
   prevPhase: FocusPhase;
   phase: FocusPhase;
@@ -76,6 +82,8 @@ export interface CueInput {
   state: FocusState;
   /** Set when the phase just became 'unavailable' because calibration failed. */
   failure?: CalibrationFailure | null;
+  /** Settings opt-in for the spoken distraction nudge. Default off. */
+  speakOnDistracted?: boolean;
   now: number;
 }
 
@@ -86,7 +94,7 @@ export interface CueInput {
  * the exception.
  */
 export function selectCue(input: CueInput): VoiceCueId | null {
-  const { prevPhase, phase, prevState, state, failure } = input;
+  const { prevPhase, phase, prevState, state, failure, speakOnDistracted } = input;
 
   // ---- calibration: spoken because the student is aiming the phone and
   // physically cannot read the screen while doing it.
@@ -101,12 +109,35 @@ export function selectCue(input: CueInput): VoiceCueId | null {
 
   // ---- away / return, on the transition edge only
   if (state === 'away' && prevState !== 'away') return 'away';
-  if (prevState === 'away' && state !== 'away') return 'return';
+
+  /**
+   * "Welcome back" requires actually SEEING them back.
+   *
+   * `away -> uncertain` is not a return: it means the camera stopped being able
+   * to judge, which is exactly what happens when the lights go out while nobody
+   * is there. Firing 'return' on it was both a lie and half of a spam loop — in
+   * a dark room the state flickers away/uncertain/away and the student heard
+   * "Welcome back" / "Timer paused" alternating at each flip.
+   */
+  if (prevState === 'away' && SEEING_STATES.has(state)) return 'return';
 
   // ---- drowsy
   if (state === 'drowsy' && prevState !== 'drowsy') return 'drowsy';
 
-  // focused / glance / uncertain / distracted -> deliberately silent
+  /**
+   * ---- sustained distraction, OFF BY DEFAULT.
+   *
+   * Deliberately opt-in: this is the one line likely to embarrass a student
+   * sharing a room with family, and the silent haptic already covers the case.
+   * Enabled from Settings ("Say something when I look away"), which is also
+   * what makes the feature demonstrable — the other spoken cues need you to
+   * walk off or fall asleep to trigger.
+   */
+  if (speakOnDistracted && state === 'distracted' && prevState !== 'distracted') {
+    return 'distracted';
+  }
+
+  // focused / glance / uncertain -> deliberately silent
   return null;
 }
 

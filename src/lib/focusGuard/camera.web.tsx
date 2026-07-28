@@ -26,6 +26,7 @@ export function useFocusGuard(opts: UseFocusGuardOptions): FocusGuardStatus {
     nudge: 0,
     voiceCue: null,
     calibrationFailure: null,
+    retryCalibration: () => {},
   };
 }
 

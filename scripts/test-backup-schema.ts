@@ -83,6 +83,7 @@ function stateFor(classLevel: ClassLevel, group: StudyGroup): BackupData {
     focusGuardEnabled: true,
     focusVoiceEnabled: true,
     focusVoiceId: 'george',
+    focusVoiceDistracted: true,
     attentionSpans: [12, 18, 15],
   };
 }

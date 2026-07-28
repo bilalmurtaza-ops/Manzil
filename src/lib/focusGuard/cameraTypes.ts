@@ -44,6 +44,16 @@ export interface FocusGuardStatus {
   voiceCue: { id: VoiceCueId; variant: number; token: number } | null;
   /** Why calibration gave up, when it did. Drives the spoken failure line. */
   calibrationFailure: CalibrationFailure | null;
+  /**
+   * Start calibration over after a failure.
+   *
+   * Exists because calibration failure is now TERMINAL rather than
+   * self-retrying. It used to re-run on every frame while the baseline stayed
+   * null, which re-fired the spoken failure line ~3x a second — the overlapping
+   * "chaos" reported from a dark room. Recovery is now an explicit, student-
+   * initiated act: turn a light on, move the phone, then tap once.
+   */
+  retryCalibration: () => void;
 }
 
 export interface FocusGuardApi {

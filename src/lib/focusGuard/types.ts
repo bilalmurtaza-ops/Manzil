@@ -126,7 +126,22 @@ export interface FocusConfig {
    */
   drowsyMotionCeiling: number;
 
-  /** Frames darker than this are unreadable. A room during load-shedding. */
+  /**
+   * Ambient light below which a frame with NO FACE IN IT is treated as "we
+   * cannot see" rather than "they left". It never overrides a detected face —
+   * see `classifyInstant`.
+   *
+   * Units: the camera layer normalises the ambient sensor as lux/100, so 0.04
+   * is ~4 lux. Reference points: load-shedding blackout 0-1 lux, moonlight ~1,
+   * a dim bulb 20-50, a normally lit room 100-300.
+   *
+   * This was 0.12 (~12 lux) and reported "too dark" in rooms that were plainly
+   * lit — the sensor sits on the FRONT of the phone and reads the light falling
+   * on it, not what the camera sees, so a student leaning over the phone or a
+   * lamp behind them collapses the reading. Verified on a Samsung A55. The real
+   * fix is face-wins-over-lux; this lower bound is the belt to that's braces,
+   * and now only has to separate a true blackout from an empty lit room.
+   */
   minLuma: number;
   /** Faces smaller than this fraction of frame are too far away to judge. */
   minFaceArea: number;
@@ -151,7 +166,7 @@ export const DEFAULT_FOCUS_CONFIG: FocusConfig = {
   frontalPitchForEyesDeg: 25,
   drowsyMotionCeiling: 6,
 
-  minLuma: 0.12,
+  minLuma: 0.04,
   minFaceArea: 0.01,
 
   memorisationMode: false,

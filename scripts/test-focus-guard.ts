@@ -137,9 +137,29 @@ section('1. Calibration');
     check('baseline yaw is centred', Math.abs(r.baseline.yaw) < 4, `${r.baseline.yaw}`);
   }
 
-  const dark = trace([{ seconds: 5, sample: { ...READING, luma: 0.03 } }]);
+  /**
+   * A blackout is a dark room WITH NOBODY VISIBLE IN IT. That is the only shape
+   * of darkness we can honestly diagnose, and the only one worth refusing on.
+   */
+  const dark = trace([{ seconds: 5, sample: { face: false, luma: 0.01 } }]);
   const rd = calibrate(dark, CFG);
-  check('a dark room refuses to calibrate', !rd.ok && rd.reason === 'too-dark', !rd.ok ? rd.reason : 'ok');
+  check('a dark room with no face refuses to calibrate', !rd.ok && rd.reason === 'too-dark', !rd.ok ? rd.reason : 'ok');
+
+  /**
+   * REGRESSION — the Samsung A55 false positive, reported from a real room.
+   *
+   * This assertion previously ran the other way: it fed a perfectly visible
+   * reader with a low `luma` and demanded "too-dark". That encoded the bug
+   * rather than guarding against it, because `luma` comes from the ambient
+   * sensor on the FRONT of the phone, not from the frame — a student leaning
+   * over the handset, or a lamp behind them, collapses it while the camera
+   * still sees them fine. Focus Guard then refused to run in a lit room.
+   *
+   * A detected face is direct evidence the camera can see. It must win.
+   */
+  const dimButVisible = trace([{ seconds: 5, sample: withJitter({ ...READING, luma: 0.01 }) }]);
+  const rdim = calibrate(dimButVisible, CFG);
+  check('a VISIBLE face in low sensor light still calibrates', rdim.ok, rdim.ok ? 'ok' : rdim.reason);
 
   const noFace = trace([{ seconds: 5, sample: { face: false, luma: 0.5 } }]);
   const rn = calibrate(noFace, CFG);
@@ -262,6 +282,60 @@ section('7. LOAD-SHEDDING — the room goes dark mid-session');
   check('the score reflects only what was seen', (report.score ?? 0) > 0.97, pct(report.score ?? 0));
   check('state during the outage is uncertain', stateAt(states, samples, 200) === 'uncertain');
   check('recovers when power returns', states[states.length - 1] === 'focused');
+
+  /**
+   * REGRESSION — the Samsung A55 "room is too dark" false positive.
+   *
+   * `luma` is the phone's FRONT ambient-light sensor, not the camera frame, so
+   * it reads low whenever the student leans over the handset or the light is
+   * behind them. It used to be checked before face presence and could therefore
+   * veto a face the camera could see perfectly, refusing to run in a lit room.
+   *
+   * A detected face is direct evidence the camera can see. Darkness may only
+   * ever explain a MISSING face. Both halves are asserted here, because getting
+   * one right by breaking the other is the obvious wrong fix.
+   */
+  {
+    /**
+     * Differential: the SAME reader, once in a brightly-sensed room and once
+     * with the light sensor pinned near zero. While a face is visible the two
+     * must be indistinguishable — that is precisely what "a face outranks the
+     * light sensor" means, and it asserts it without hard-coding any of the
+     * machine's start-up settling behaviour.
+     */
+    const bright = runTrace(
+      trace([{ seconds: 60, sample: { ...READING, luma: 0.9 } }]),
+      BOOK_BASELINE,
+      CFG,
+    ).report;
+    const dim = runTrace(
+      trace([{ seconds: 60, sample: { ...READING, luma: 0.001 } }]),
+      BOOK_BASELINE,
+      CFG,
+    ).report;
+    check(
+      'a visible reader scores identically however low the light sensor reads',
+      dim.focusedMs === bright.focusedMs && dim.uncertainMs === bright.uncertainMs,
+      `dim focused=${dim.focusedMs} uncertain=${dim.uncertainMs} | bright focused=${bright.focusedMs} uncertain=${bright.uncertainMs}`,
+    );
+    check(
+      '...and that reader is credited as focused, not abstained on',
+      (dim.score ?? 0) > 0.97 && dim.focusedMs > 55_000,
+      `${pct(dim.score ?? 0)} focused=${Math.round(dim.focusedMs / 1000)}s`,
+    );
+
+    // The other half: no face in a LIT room is still someone who left.
+    const litEmpty = trace([
+      { seconds: 30, sample: READING },
+      { seconds: 60, sample: { face: false, luma: 0.9 } },
+    ]);
+    const e = runTrace(litEmpty, BOOK_BASELINE, CFG);
+    check(
+      'an empty LIT room is still reported as away',
+      e.report.awayMs > 45_000,
+      `${Math.round(e.report.awayMs / 1000)}s`,
+    );
+  }
 }
 
 // ===========================================================================
@@ -532,7 +606,7 @@ section('18. Voice cues — speak only where the screen cannot be read');
     );
   }
   check(
-    'sustained distraction is never spoken (haptic only)',
+    'sustained distraction is silent BY DEFAULT (haptic only)',
     selectCue({ ...base, prevState: 'glance', state: 'distracted' }) === null,
   );
 
@@ -540,6 +614,58 @@ section('18. Voice cues — speak only where the screen cannot be read');
   check('away speaks on entry', selectCue({ ...base, prevState: 'focused', state: 'away' }) === 'away');
   check('return speaks on exit', selectCue({ ...base, prevState: 'away', state: 'focused' }) === 'return');
   check('drowsy speaks on entry', selectCue({ ...base, prevState: 'focused', state: 'drowsy' }) === 'drowsy');
+
+  /**
+   * --- REGRESSION: the dark-room spam loop.
+   *
+   * `away -> uncertain` is NOT a return; it means the camera stopped being able
+   * to judge. Speaking "Welcome back" there was both untrue and half of a spam
+   * loop: in a dark room the state flickers away/uncertain/away, so the student
+   * heard "Timer paused" and "Welcome back" alternating at every flip.
+   */
+  check(
+    'away -> uncertain does NOT say welcome back',
+    selectCue({ ...base, prevState: 'away', state: 'uncertain' }) === null,
+    `${selectCue({ ...base, prevState: 'away', state: 'uncertain' })}`,
+  );
+  for (const seeing of ['focused', 'glance', 'distracted', 'drowsy'] as FocusState[]) {
+    check(
+      `away -> ${seeing} is a real return`,
+      selectCue({ ...base, prevState: 'away', state: seeing }) === 'return',
+    );
+  }
+
+  // --- opt-in spoken distraction nudge
+  check(
+    'distraction speaks when the setting is on',
+    selectCue({ ...base, prevState: 'glance', state: 'distracted', speakOnDistracted: true }) ===
+      'distracted',
+  );
+  check(
+    'distraction stays silent when the setting is off',
+    selectCue({ ...base, prevState: 'glance', state: 'distracted', speakOnDistracted: false }) === null,
+  );
+  check(
+    'staying distracted does not speak again',
+    selectCue({
+      ...base,
+      prevState: 'distracted',
+      state: 'distracted',
+      speakOnDistracted: true,
+    }) === null,
+  );
+  check(
+    'the distraction opt-in cannot make ambient states speak',
+    ['focused', 'glance', 'uncertain'].every(
+      (s) =>
+        selectCue({
+          ...base,
+          prevState: 'focused',
+          state: s as FocusState,
+          speakOnDistracted: true,
+        }) === null,
+    ),
+  );
 
   // --- transitions, not states: away persists for minutes and must speak once
   check(

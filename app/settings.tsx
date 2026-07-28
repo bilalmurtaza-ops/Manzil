@@ -53,6 +53,8 @@ export default function SettingsScreen() {
   const focusVoiceEnabled = useAppStore((s) => s.focusVoiceEnabled);
   const toggleFocusVoice = useAppStore((s) => s.toggleFocusVoice);
   const focusVoiceId = useAppStore((s) => s.focusVoiceId);
+  const focusVoiceDistracted = useAppStore((s) => s.focusVoiceDistracted);
+  const toggleFocusVoiceDistracted = useAppStore((s) => s.toggleFocusVoiceDistracted);
   const setFocusVoiceId = useAppStore((s) => s.setFocusVoiceId);
   const quizAttempts = useAppStore((s) => s.quizAttempts);
   const flashcards = useAppStore((s) => s.flashcards);
@@ -265,6 +267,11 @@ export default function SettingsScreen() {
   const handleToggleFocusVoice = () => {
     triggerHapticIfEnabled();
     toggleFocusVoice();
+  };
+
+  const handleToggleFocusVoiceDistracted = () => {
+    triggerHapticIfEnabled();
+    toggleFocusVoiceDistracted();
   };
 
   const handleSelectVoice = (id: string) => {
@@ -518,6 +525,39 @@ export default function SettingsScreen() {
                     style={[
                       styles.toggleThumb,
                       focusVoiceEnabled ? styles.toggleThumbOn : styles.toggleThumbOff,
+                    ]}
+                  />
+                </Pressable>
+              </View>
+            )}
+
+            {/* Nested under Spoken cues because it does nothing on its own, but
+                still its own consent: this is the one line that can embarrass a
+                student in a shared room, so it stays off until asked for. It is
+                also the only cue you can trigger on demand — the others need you
+                to walk off or fall asleep — which makes it what you switch on to
+                hear the voice at all. */}
+            {focusGuardSupported && focusGuardEnabled && focusVoiceEnabled && (
+              <View style={styles.settingRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.settingTitle}>Speak when I look away</Text>
+                  <Text style={styles.settingSub}>
+                    Adds a quiet nudge if you stay turned away from your book. Off by
+                    default — the gentle buzz already covers it without anyone else
+                    hearing.
+                  </Text>
+                </View>
+                <Pressable
+                  style={[
+                    styles.toggleTrack,
+                    focusVoiceDistracted ? styles.toggleTrackOn : styles.toggleTrackOff,
+                  ]}
+                  onPress={handleToggleFocusVoiceDistracted}
+                >
+                  <View
+                    style={[
+                      styles.toggleThumb,
+                      focusVoiceDistracted ? styles.toggleThumbOn : styles.toggleThumbOff,
                     ]}
                   />
                 </Pressable>

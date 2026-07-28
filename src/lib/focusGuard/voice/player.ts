@@ -19,6 +19,10 @@ export function playCue(_cue: VoiceCue, _voiceId?: string): void {
   /* resolved per-platform at bundle time */
 }
 
+export function stopSpeaking(): void {
+  /* nothing is playing on this platform */
+}
+
 export function previewVoice(_voiceId: string): void {
   /* no audio on this platform */
 }

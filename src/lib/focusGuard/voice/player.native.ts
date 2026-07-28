@@ -96,24 +96,60 @@ export async function preloadVoicePack(): Promise<string[]> {
   return failures;
 }
 
+/**
+ * Everything currently making noise, so it can be silenced before anything new
+ * starts.
+ *
+ * THE BUG THIS EXISTS TO KILL: `playFile` used to create a player, call
+ * `play()`, and forget about it for six seconds. Nothing tracked the previous
+ * one, so two cues arriving close together simply played on top of each other.
+ * Combined with the calibration retry loop (see `camera.native.tsx`) that meant
+ * three overlapping voices a second — the reported "clash of voices, absolute
+ * chaos" in a dark room. One utterance at a time is now structurally enforced
+ * here, INDEPENDENTLY of the cue layer, so no future caller can reintroduce it.
+ */
+const live = new Set<{ player: any; timer: ReturnType<typeof setTimeout> }>();
+
+/** Stop and dispose everything currently playing. Safe to call at any time. */
+export function stopSpeaking(): void {
+  for (const entry of live) {
+    clearTimeout(entry.timer);
+    try {
+      entry.player.pause?.();
+    } catch {
+      /* already stopped */
+    }
+    try {
+      entry.player.remove();
+    } catch {
+      /* already gone */
+    }
+  }
+  live.clear();
+}
+
 /** Players are disposed after use; holding them open keeps audio focus. */
-function playFile(uri: string, onDone?: () => void): void {
+function playFile(uri: string, holdMs = 6000): void {
   const m = loadModules();
   if (!m) return;
   try {
     const player = m.createAudioPlayer(uri);
+    const entry = {
+      player,
+      // Plain JS clock, per the project convention for time-based logic.
+      timer: setTimeout(() => {
+        live.delete(entry);
+        try {
+          player.remove();
+        } catch {
+          /* already gone */
+        }
+      }, holdMs),
+    };
+    live.add(entry);
     player.play();
-    // Plain JS clock, per the project convention for time-based logic.
-    setTimeout(() => {
-      try {
-        player.remove();
-      } catch {
-        /* already gone */
-      }
-      onDone?.();
-    }, 6000);
   } catch {
-    onDone?.();
+    /* a clip that will not play must never take the session down */
   }
 }
 
@@ -139,10 +175,28 @@ export function playCue(cue: VoiceCue, voiceId: string = DEFAULT_VOICE_ID): void
   const lineUri = resolved.get(clipFile(voice, variant.file));
   if (!lineUri) return; // missing clip -> silence, never a crash
 
+  // Anything still speaking is cut off first. Interrupting beats overlapping:
+  // the newest cue is always the most relevant, and two voices at once is
+  // unintelligible rather than merely untidy.
+  stopSpeaking();
+
   const chimeUri = resolved.get(CHIME_FILE);
   if (chimeUri) {
-    playFile(chimeUri);
-    setTimeout(() => playFile(lineUri), CHIME_LEAD_MS);
+    // The chime is held only until the line starts, so it cannot bleed under it.
+    playFile(chimeUri, CHIME_LEAD_MS + 200);
+    // The not-yet-started line is registered as live too, so a `stopSpeaking()`
+    // landing during the gap cancels it. Without this the line would surface
+    // after the stop — a voice that speaks after being silenced.
+    const pending: { player: any; timer: ReturnType<typeof setTimeout> } = {
+      player: { remove() {}, pause() {} },
+      timer: setTimeout(() => {}, 0),
+    };
+    clearTimeout(pending.timer);
+    pending.timer = setTimeout(() => {
+      live.delete(pending);
+      playFile(lineUri);
+    }, CHIME_LEAD_MS);
+    live.add(pending);
   } else {
     playFile(lineUri);
   }

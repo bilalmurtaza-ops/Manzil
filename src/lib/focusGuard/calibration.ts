@@ -48,17 +48,29 @@ export function calibrate(samples: FocusSample[], config: FocusConfig): Calibrat
 
   // Diagnose the DOMINANT reason for failure, so the student gets an
   // instruction they can act on instead of a generic shrug.
-  const lit = samples.filter((s) => s.luma === undefined || s.luma >= config.minLuma);
-  if (lit.length < MIN_VALID_SAMPLES) return { ok: false, reason: 'too-dark' };
-
-  const withFace = lit.filter(
+  //
+  // FACES ARE COUNTED BEFORE LIGHT IS JUDGED, mirroring `classifyInstant`. This
+  // used to filter out "dark" samples FIRST and then look for faces in what
+  // survived, so a student the camera could see perfectly was told "it's too
+  // dark for the camera to see you" whenever the phone's front-mounted ambient
+  // sensor read low — which it does when they lean over it, or the light is
+  // behind them. That is the Samsung A55 false positive. Light now only gets to
+  // explain WHY a face is missing; it can never veto one that was found.
+  const withFace = samples.filter(
     (s) => s.face && s.pitch !== undefined && s.yaw !== undefined && s.roll !== undefined,
   );
-  if (withFace.length < MIN_VALID_SAMPLES) return { ok: false, reason: 'no-face' };
+  if (withFace.length < MIN_VALID_SAMPLES) {
+    // Not enough faces. Was the room dark enough to explain that, or is the
+    // phone simply pointed at the ceiling?
+    const dark = samples.filter((s) => s.luma !== undefined && s.luma < config.minLuma);
+    return { ok: false, reason: dark.length > samples.length / 2 ? 'too-dark' : 'no-face' };
+  }
 
   const nearEnough = withFace.filter(
     (s) => s.faceArea === undefined || s.faceArea >= config.minFaceArea,
   );
+  // Deliberately checked AFTER faces exist: "move the phone closer" is only
+  // useful advice once we know it is pointed at them at all.
   if (nearEnough.length < MIN_VALID_SAMPLES) return { ok: false, reason: 'too-far' };
 
   const pitches = nearEnough.map((s) => s.pitch as number);

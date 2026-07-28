@@ -137,6 +137,11 @@ export interface UseFocusGuardOptions {
   config?: Partial<FocusConfig>;
   /** Session finished; freeze and produce the report. */
   finished?: boolean;
+  /**
+   * Settings opt-in for the spoken distraction nudge. Passed down to `cues.ts`,
+   * which owns the decision — this only carries the preference.
+   */
+  speakOnDistracted?: boolean;
 }
 
 const NUDGE_COOLDOWN_MS = 120_000;
@@ -179,7 +184,15 @@ export function useFocusGuard(opts: UseFocusGuardOptions): FocusGuardStatus {
       failure: CalibrationFailure | null = null,
     ) => {
       const picked = nextCue(
-        { prevPhase, phase: nextPhase, prevState, state: nextState, failure, now: Date.now() },
+        {
+          prevPhase,
+          phase: nextPhase,
+          prevState,
+          state: nextState,
+          failure,
+          speakOnDistracted: opts.speakOnDistracted,
+          now: Date.now(),
+        },
         cueMemory.current,
       );
       if (!picked) return;
@@ -187,10 +200,22 @@ export function useFocusGuard(opts: UseFocusGuardOptions): FocusGuardStatus {
       cueToken.current += 1;
       setVoiceCue({ ...picked.cue, token: cueToken.current });
     },
-    [],
+    [opts.speakOnDistracted],
   );
 
   const baseline = useRef<FocusBaseline | null>(null);
+  /**
+   * Calibration is a one-shot with a TERMINAL failure, tracked in a ref because
+   * the sample pump is a stable callback and would read stale React state.
+   *
+   * The bug this fixes: on failure the baseline stayed null, so every later
+   * sample re-entered the calibration branch, re-ran `calibrate()` on an
+   * ever-growing buffer, and re-emitted the failure cue — which BYPASSES the
+   * voice cooldown by design, being an instruction the student is waiting on.
+   * At ~3 samples/sec that is three spoken lines a second, all overlapping.
+   * That is the entire "clash of voices" in a dark room.
+   */
+  const calibration = useRef<'pending' | 'ok' | 'failed'>('pending');
   const machine = useRef(initMachine(0));
   const segments = useRef<FocusSegment[]>([]);
   const calibrationBuf = useRef<FocusSample[]>([]);
@@ -200,6 +225,42 @@ export function useFocusGuard(opts: UseFocusGuardOptions): FocusGuardStatus {
   const distractedSince = useRef<number | null>(null);
 
   const luma = useAmbientLuma(active);
+
+  /**
+   * Put the machine back to a clean pre-calibration state and announce it.
+   *
+   * One function for both the initial start and an explicit retry, so the two
+   * paths can never drift — a retry that forgot to reset `startedAt` would
+   * re-fail instantly, since the 5-second window is measured from it.
+   */
+  const beginCalibration = useCallback(
+    (from: FocusPhase) => {
+      calibration.current = 'pending';
+      baseline.current = null;
+      calibrationBuf.current = [];
+      segments.current = [];
+      startedAt.current = Date.now();
+      lastSampleAt.current = 0;
+      distractedSince.current = null;
+      machine.current = initMachine(0);
+      setState('uncertain');
+      setPhase('calibrating');
+      setMessage(null);
+      setCalibrationFailure(null);
+      emitCue(from, 'calibrating', 'uncertain', 'uncertain');
+    },
+    [emitCue],
+  );
+
+  /**
+   * Student-initiated recovery after a failed calibration. Only meaningful from
+   * `unavailable`; guarded so a stray tap mid-session cannot wipe a good
+   * baseline and lose the timeline collected so far.
+   */
+  const retryCalibration = useCallback(() => {
+    if (!active || calibration.current !== 'failed') return;
+    beginCalibration('unavailable');
+  }, [active, beginCalibration]);
 
   // ---- permission -------------------------------------------------------
   const permission = native?.useCameraPermission?.() ?? {
@@ -229,15 +290,7 @@ export function useFocusGuard(opts: UseFocusGuardOptions): FocusGuardStatus {
       });
       return;
     }
-    setPhase('calibrating');
-    setMessage(null);
-    setCalibrationFailure(null);
-    emitCue('idle', 'calibrating', 'uncertain', 'uncertain');
-    baseline.current = null;
-    calibrationBuf.current = [];
-    segments.current = [];
-    startedAt.current = Date.now();
-    machine.current = initMachine(0);
+    beginCalibration('idle');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [opts.enabled, supported, hasPermission]);
 
@@ -289,18 +342,27 @@ export function useFocusGuard(opts: UseFocusGuardOptions): FocusGuardStatus {
         : { t, face: false, luma: luma.current };
 
       // ---- calibration window
+      // Terminal once it has failed: no re-running, no second spoken line.
+      // Recovery is `retryCalibration()`, which the student triggers.
+      if (calibration.current === 'failed') return;
+
       if (!baseline.current) {
         calibrationBuf.current.push(sample);
         if (t >= CALIBRATION_MS) {
           const result = calibrate(calibrationBuf.current, config);
           if (result.ok) {
+            calibration.current = 'ok';
             baseline.current = result.baseline;
             machine.current = initMachine(t);
+            calibrationBuf.current = [];
             setPhase('running');
             setMessage(null);
             emitCue('calibrating', 'running', 'uncertain', 'uncertain');
           } else {
             // Refuse to run rather than guess. The timer is untouched.
+            calibration.current = 'failed';
+            // Release the buffer: it grew unbounded across the old retry loop.
+            calibrationBuf.current = [];
             setPhase('unavailable');
             setMessage(CALIBRATION_HELP[result.reason]);
             setCalibrationFailure(result.reason);
@@ -361,6 +423,7 @@ export function useFocusGuard(opts: UseFocusGuardOptions): FocusGuardStatus {
     nudge,
     voiceCue,
     calibrationFailure,
+    retryCalibration,
     // Internal wiring the view component needs; not part of the public shape.
     ...({ __onFacesDetected: onFacesDetected, __onError: onError, __active: active } as object),
   } as FocusGuardStatus;

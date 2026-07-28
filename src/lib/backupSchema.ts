@@ -284,6 +284,7 @@ export function buildEnvelope(state: BackupData, meta: EnvelopeMeta): BackupEnve
     focusGuardEnabled: state.focusGuardEnabled,
     focusVoiceEnabled: state.focusVoiceEnabled,
     focusVoiceId: state.focusVoiceId,
+    focusVoiceDistracted: state.focusVoiceDistracted,
     attentionSpans: state.attentionSpans,
   };
 
@@ -454,6 +455,10 @@ export function parseBackup(raw: unknown): ParseResult {
       isStr(data.focusVoiceId) && isKnownVoice(data.focusVoiceId)
         ? data.focusVoiceId
         : DEFAULT_VOICE_ID,
+    // Third flag, same strict `=== true` reading. This one speaks aloud when the
+    // student looks away, so a restored backup must never turn it on by
+    // implication — least of all in a room shared with family.
+    focusVoiceDistracted: data.focusVoiceDistracted === true,
     attentionSpans: Array.isArray(data.attentionSpans)
       ? data.attentionSpans
           .filter((n: unknown): n is number => isNum(n) && n > 0 && n <= 600)

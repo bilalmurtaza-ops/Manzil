@@ -94,7 +94,8 @@ export type VoiceCueId =
   | 'calibration-too-restless'
   | 'away'
   | 'return'
-  | 'drowsy';
+  | 'drowsy'
+  | 'distracted';
 
 export interface VoiceVariant {
   /** Filename inside assets/voice/. Also the key into the generated asset map. */
@@ -164,6 +165,22 @@ export const VOICE_LINES: Record<VoiceCueId, VoiceVariant[]> = {
     { file: 'return-2.mp3', text: 'Good — the clock is running again.' },
     { file: 'return-3.mp3', text: "Back to it. You've got this." },
     { file: 'return-4.mp3', text: 'Timer is going again. Keep it steady.' },
+  ],
+
+  /**
+   * Sustained distraction. OFF unless switched on in Settings.
+   *
+   * Written to be survivable in a shared room: nobody overhearing it learns
+   * that the student was caught doing anything. No "you're distracted", no
+   * "concentrate" — each line is a neutral invitation back that would sound
+   * unremarkable to a parent or sibling within earshot. That constraint, not
+   * politeness, is why the phrasing is this careful.
+   */
+  distracted: [
+    { file: 'distracted-1.mp3', text: 'Still with me? Come back to the page when you can.' },
+    { file: 'distracted-2.mp3', text: "Whenever you're ready, back to the book." },
+    { file: 'distracted-3.mp3', text: "Let's pick the thread back up." },
+    { file: 'distracted-4.mp3', text: 'Eyes back down when you can.' },
   ],
 
   // Never scolding: a tired student needs a break, not a telling-off.

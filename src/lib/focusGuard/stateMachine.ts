@@ -59,10 +59,26 @@ function updateMotion(m: FocusMachine, s: FocusSample): number {
 /**
  * Read a single sample, before any dwell smoothing.
  *
- * ORDER IS LOAD-BEARING. Darkness is checked before face-absence, because
- * during load-shedding the room goes black and the face vanishes — reporting
- * that as "the student walked away" would be the single most common false
- * positive this app could produce in Pakistan. Unreadable is not absent.
+ * ORDER IS LOAD-BEARING, and the rule is: A DETECTED FACE OUTRANKS THE LIGHT
+ * SENSOR, and darkness only ever explains a MISSING face.
+ *
+ * Why the sensor cannot be trusted to veto a face: `luma` does not come from
+ * the frame. It comes from the ambient light sensor on the FRONT of the phone,
+ * which measures light falling on the handset — not what the camera can see.
+ * A student leaning over the phone, a lamp behind them, or a hand near the
+ * bezel collapses that reading while the camera still has a perfectly lit face.
+ * Checking luma first therefore declared "it's too dark to see you" at people
+ * it could see, which is what a Samsung A55 in a normally lit Pakistani room
+ * reported. If ML Kit found a face, the camera could see: that is direct
+ * evidence and it wins over an indirect proxy.
+ *
+ * The load-shedding protection this ordering originally existed for is fully
+ * preserved, because it only ever mattered when the face was gone: no face in
+ * a black room is still `unreliable` (we cannot see), never `no-face` (they
+ * left). Reporting a power cut as "the student walked away" remains the single
+ * most common false positive this app could produce here, and step 2 below
+ * still prevents it. Unreadable is not absent — but neither is "sensor says
+ * dark" the same thing as "camera is blind".
  */
 export function classifyInstant(
   s: FocusSample,
@@ -70,20 +86,21 @@ export function classifyInstant(
   config: FocusConfig,
   motion: number,
 ): FocusInstant {
-  // 1. Can we see anything at all?
-  if (s.luma !== undefined && s.luma < config.minLuma) return 'unreliable';
+  // 1. No face? Then, and only then, does the light sensor get a say: it
+  //    decides whether the student is absent or the room is simply unreadable.
+  if (!s.face) {
+    if (s.luma !== undefined && s.luma < config.minLuma) return 'unreliable';
+    return 'no-face';
+  }
 
-  // 2. Nobody there (in a room we could otherwise see).
-  if (!s.face) return 'no-face';
-
-  // 3. Too far away for the angles to mean much.
+  // 2. Too far away for the angles to mean much.
   if (s.faceArea !== undefined && s.faceArea < config.minFaceArea) return 'unreliable';
 
-  // 4. Detector gave us a face but no pose — occlusion (a dupatta, a hand, a
+  // 3. Detector gave us a face but no pose — occlusion (a dupatta, a hand, a
   //    steep angle). Abstain rather than guess.
   if (s.pitch === undefined || s.yaw === undefined || s.roll === undefined) return 'unreliable';
 
-  // 5. Deviation is measured against THIS student's reading posture, never an
+  // 4. Deviation is measured against THIS student's reading posture, never an
   //    absolute. Head-down over a book is their normal, not a distraction.
   const dPitch = angleDelta(s.pitch, baseline.pitch);
   const dYaw = angleDelta(s.yaw, baseline.yaw);
@@ -96,7 +113,7 @@ export function classifyInstant(
     return 'deviated';
   }
 
-  // 6. Drowsiness, but only where the eye classifier can be trusted. These
+  // 5. Drowsiness, but only where the eye classifier can be trusted. These
   //    bounds are absolute because ML Kit's classifier works in absolute head
   //    pose — which means a student bent over a book falls outside them and
   //    drowsiness detection quietly switches itself off. That is the correct

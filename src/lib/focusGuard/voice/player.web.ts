@@ -18,6 +18,10 @@ export function playCue(_cue: VoiceCue, _voiceId?: string): void {
   /* no audio on web */
 }
 
+export function stopSpeaking(): void {
+  /* nothing is playing on this platform */
+}
+
 export function previewVoice(_voiceId: string): void {
   /* no audio on this platform */
 }

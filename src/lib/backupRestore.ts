@@ -84,6 +84,7 @@ export function currentBackupState(): BackedUpState {
     focusGuardEnabled: s.focusGuardEnabled,
     focusVoiceEnabled: s.focusVoiceEnabled,
     focusVoiceId: s.focusVoiceId,
+    focusVoiceDistracted: s.focusVoiceDistracted,
     attentionSpans: s.attentionSpans,
   };
 }

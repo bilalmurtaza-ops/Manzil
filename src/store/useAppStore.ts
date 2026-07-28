@@ -36,6 +36,17 @@ interface AppState {
   /** Which of FOCUS_VOICES speaks. Validated on restore — see backupSchema. */
   focusVoiceId: string;
   /**
+   * Whether the voice also speaks on sustained distraction. Default FALSE, and
+   * nested under `focusVoiceEnabled` — it does nothing on its own.
+   *
+   * Its own flag because this is the one line that can embarrass a student in a
+   * shared room, so "I want spoken cues" and "I want to be spoken to when I
+   * look away" are genuinely different consents. Also the only cue you can
+   * trigger on demand, which makes it what you turn on to demo or test the
+   * voice without walking off or falling asleep.
+   */
+  focusVoiceDistracted: boolean;
+  /**
    * Longest unbroken focus, in minutes, observed in recent sessions. Feeds the
    * session-length advice in planEngine. Plain numbers only: no timestamps, no
    * per-sample data, nothing that could reconstruct what the camera saw.
@@ -55,6 +66,7 @@ interface AppState {
   toggleFocusGuard: () => void;
   toggleFocusVoice: () => void;
   setFocusVoiceId: (id: string) => void;
+  toggleFocusVoiceDistracted: () => void;
   recordAttentionSpan: (minutes: number) => void;
   resetAll: () => void;
 }
@@ -84,6 +96,7 @@ export type BackedUpState = Omit<
   | 'toggleFocusGuard'
   | 'toggleFocusVoice'
   | 'setFocusVoiceId'
+  | 'toggleFocusVoiceDistracted'
   | 'recordAttentionSpan'
   | 'resetAll'
 >;
@@ -99,6 +112,7 @@ export const BACKED_UP_KEYS = [
   'focusGuardEnabled',
   'focusVoiceEnabled',
   'focusVoiceId',
+  'focusVoiceDistracted',
   'attentionSpans',
 ] as const satisfies readonly (keyof BackedUpState)[];
 
@@ -121,6 +135,7 @@ export const useAppStore = create<AppState>()(
       focusGuardEnabled: false,
       focusVoiceEnabled: false,
       focusVoiceId: DEFAULT_VOICE_ID,
+      focusVoiceDistracted: false,
       attentionSpans: [],
 
       setProfile: (profile) => set({ profile }),
@@ -188,6 +203,9 @@ export const useAppStore = create<AppState>()(
 
       setFocusVoiceId: (id) => set({ focusVoiceId: id }),
 
+      toggleFocusVoiceDistracted: () =>
+        set((s) => ({ focusVoiceDistracted: !s.focusVoiceDistracted })),
+
       // Keep only a recent window: attention span drifts with sleep, stress and
       // exam proximity, so a span measured two months ago should not still be
       // shaping today's advice.
@@ -206,6 +224,7 @@ export const useAppStore = create<AppState>()(
           focusGuardEnabled: false,
           focusVoiceEnabled: false,
           focusVoiceId: DEFAULT_VOICE_ID,
+          focusVoiceDistracted: false,
           attentionSpans: [],
         }),
     }),

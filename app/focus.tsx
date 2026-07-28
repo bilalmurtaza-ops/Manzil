@@ -9,7 +9,7 @@ import { ProgressRing } from '../src/components/ProgressRing';
 import { getChapter, getSubject } from '../src/data/syllabus';
 import { FocusCameraView, useFocusGuard } from '../src/lib/focusGuard/camera';
 import { attentionSpanMinutes } from '../src/lib/focusGuard';
-import { playCue, preloadVoicePack } from '../src/lib/focusGuard/voice/player';
+import { playCue, preloadVoicePack, stopSpeaking } from '../src/lib/focusGuard/voice/player';
 import { useAppStore } from '../src/store/useAppStore';
 import { color, font, radius, space, type } from '../src/theme/tokens';
 
@@ -49,6 +49,8 @@ export default function FocusScreen() {
 
   const focusGuardEnabled = useAppStore((s) => s.focusGuardEnabled);
   const focusVoiceEnabled = useAppStore((s) => s.focusVoiceEnabled);
+  const focusVoiceId = useAppStore((s) => s.focusVoiceId);
+  const focusVoiceDistracted = useAppStore((s) => s.focusVoiceDistracted);
   const vibrationEnabled = useAppStore((s) => s.vibrationEnabled);
   const recordAttentionSpan = useAppStore((s) => s.recordAttentionSpan);
 
@@ -56,6 +58,7 @@ export default function FocusScreen() {
     enabled: focusGuardEnabled,
     paused: !running,
     finished,
+    speakOnDistracted: focusVoiceEnabled && focusVoiceDistracted,
   });
 
   /**
@@ -90,9 +93,15 @@ export default function FocusScreen() {
   // the transition rules and rate limiting), this only plays.
   useEffect(() => {
     if (!focusVoiceEnabled || !focus.voiceCue) return;
-    playCue(focus.voiceCue);
+    // The chosen voice MUST be passed: omitting it silently fell back to the
+    // default, so picking any other voice in Settings previewed correctly and
+    // then played as Alice for the whole session.
+    playCue(focus.voiceCue, focusVoiceId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focus.voiceCue?.token, focusVoiceEnabled]);
+  }, [focus.voiceCue?.token, focusVoiceEnabled, focusVoiceId]);
+
+  // Leaving the screen mid-line must not leave a voice talking to an empty room.
+  useEffect(() => () => stopSpeaking(), []);
 
   // Remember how long their concentration actually held, so the plan engine can
   // stop prescribing 45-minute blocks to someone whose attention breaks at 15.
@@ -179,7 +188,7 @@ export default function FocusScreen() {
                   },
                 ]}
               />
-              <Text style={styles.guardText} numberOfLines={1}>
+              <Text style={styles.guardText} numberOfLines={2}>
                 {focus.message ??
                   (focus.phase === 'calibrating'
                     ? 'Focus Guard — settle into your reading position'
@@ -187,6 +196,16 @@ export default function FocusScreen() {
                       ? 'Focus Guard — waiting for camera access'
                       : GUARD_LIVE_TEXT[focus.state])}
               </Text>
+
+              {/* Calibration failure is terminal by design — it used to retry on
+                  every frame, which re-spoke the failure line ~3x a second. So
+                  recovery has to be something the student does: fix the light or
+                  move the phone, then tap. The timer is never interrupted. */}
+              {focus.phase === 'unavailable' && focus.calibrationFailure && (
+                <Pressable onPress={focus.retryCalibration} hitSlop={10}>
+                  <Text style={styles.guardRetry}>Try again</Text>
+                </Pressable>
+              )}
             </View>
           )}
 
@@ -366,6 +385,12 @@ const styles = StyleSheet.create({
   },
   guardDot: { width: 8, height: 8, borderRadius: radius.full },
   guardText: { ...type.small, color: 'rgba(242,238,227,0.75)', flexShrink: 1 },
+  guardRetry: {
+    ...type.small,
+    color: color.greenMid,
+    fontFamily: font.semibold,
+    textDecorationLine: 'underline',
+  },
 
   reportCard: {
     marginTop: 28,
