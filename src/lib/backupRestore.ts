@@ -81,6 +81,10 @@ export function currentBackupState(): BackedUpState {
     chatHistory: s.chatHistory,
     activeDays: s.activeDays,
     vibrationEnabled: s.vibrationEnabled,
+    focusGuardEnabled: s.focusGuardEnabled,
+    focusVoiceEnabled: s.focusVoiceEnabled,
+    focusVoiceId: s.focusVoiceId,
+    attentionSpans: s.attentionSpans,
   };
 }
 
@@ -116,15 +120,17 @@ export async function applyEnvelope(envelope: BackupEnvelope): Promise<ApplyResu
   //    middleware writes 'manzil-store' itself. `hydrated` is untouched because
   //    BackupData structurally does not contain it.
   const data = envelope.data;
-  useAppStore.setState({
-    profile: data.profile,
-    plan: data.plan,
-    quizAttempts: data.quizAttempts,
-    flashcards: data.flashcards,
-    chatHistory: data.chatHistory,
-    activeDays: data.activeDays,
-    vibrationEnabled: data.vibrationEnabled,
-  });
+  /**
+   * Spread every validated field rather than listing them.
+   *
+   * Listing them by hand is a silent trap: `setState` takes a Partial, so the
+   * `BackedUpState` tripwire cannot see an omission here — a field added to the
+   * backup would be validated, shipped, and then quietly dropped on restore.
+   * `parseBackup` has already rebuilt each value from scratch, so spreading is
+   * safe: nothing untrusted reaches the store, and `hydrated` is structurally
+   * absent from BackupData.
+   */
+  useAppStore.setState({ ...data });
 
   // 3. A restored plan is stale almost by definition — it was made on another day.
   //    today.tsx only repairs on mount, which has already happened by now.

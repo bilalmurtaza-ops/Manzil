@@ -80,6 +80,10 @@ function stateFor(classLevel: ClassLevel, group: StudyGroup): BackupData {
     ],
     activeDays: ['2026-07-20', '2026-07-21'],
     vibrationEnabled: true,
+    focusGuardEnabled: true,
+    focusVoiceEnabled: true,
+    focusVoiceId: 'george',
+    attentionSpans: [12, 18, 15],
   };
 }
 
@@ -314,6 +318,91 @@ type ParseOk = ReturnType<typeof parseBackup>;
   const f = clone();
   f.data.vibrationEnabled = false;
   expectAccept('explicit false vibrationEnabled preserved', f, (r) => r.envelope.data.vibrationEnabled === false);
+}
+// ---- Focus Guard preferences -------------------------------------------
+// The camera flag defaults the OPPOSITE way to haptics: anything other than a
+// literal `true` must leave Focus Guard off. A restored backup silently
+// switching on a camera would be the worst bug this feature could have.
+{
+  const f = clone();
+  delete f.data.focusGuardEnabled;
+  expectAccept('missing focusGuardEnabled → OFF', f, (r) => r.envelope.data.focusGuardEnabled === false);
+}
+{
+  const f = clone();
+  f.data.focusGuardEnabled = 'yes';
+  expectAccept('non-boolean focusGuardEnabled → OFF', f, (r) => r.envelope.data.focusGuardEnabled === false);
+}
+{
+  const f = clone();
+  f.data.focusGuardEnabled = 1;
+  expectAccept('truthy-but-not-true focusGuardEnabled → OFF', f, (r) => r.envelope.data.focusGuardEnabled === false);
+}
+{
+  const f = clone();
+  f.data.focusGuardEnabled = true;
+  expectAccept('explicit true focusGuardEnabled preserved', f, (r) => r.envelope.data.focusGuardEnabled === true);
+}
+// Voice carries the same strict default as the camera: a restored backup must
+// never make a phone start talking out loud on its own.
+{
+  const f = clone();
+  delete f.data.focusVoiceEnabled;
+  expectAccept('missing focusVoiceEnabled → OFF', f, (r) => r.envelope.data.focusVoiceEnabled === false);
+}
+{
+  const f = clone();
+  f.data.focusVoiceEnabled = 'yes';
+  expectAccept('non-boolean focusVoiceEnabled → OFF', f, (r) => r.envelope.data.focusVoiceEnabled === false);
+}
+{
+  const f = clone();
+  f.data.focusVoiceEnabled = true;
+  expectAccept('explicit true focusVoiceEnabled preserved', f, (r) => r.envelope.data.focusVoiceEnabled === true);
+}
+// The chosen voice must always be one this build can actually play.
+{
+  const f = clone();
+  f.data.focusVoiceId = 'not-a-voice';
+  expectAccept('unknown focusVoiceId falls back to the default', f, (r) => r.envelope.data.focusVoiceId === 'alice');
+}
+{
+  const f = clone();
+  delete f.data.focusVoiceId;
+  expectAccept('missing focusVoiceId falls back to the default', f, (r) => r.envelope.data.focusVoiceId === 'alice');
+}
+{
+  const f = clone();
+  f.data.focusVoiceId = 42;
+  expectAccept('non-string focusVoiceId falls back', f, (r) => r.envelope.data.focusVoiceId === 'alice');
+}
+{
+  const f = clone();
+  f.data.focusVoiceId = 'river';
+  expectAccept('a known focusVoiceId is preserved', f, (r) => r.envelope.data.focusVoiceId === 'river');
+}
+{
+  const f = clone();
+  f.data.attentionSpans = [10, 'x', -5, 0, 999999, 22.6, null];
+  expectAccept(
+    'attentionSpans drops non-numbers and impossible values',
+    f,
+    (r) => JSON.stringify(r.envelope.data.attentionSpans) === JSON.stringify([10, 23]),
+  );
+}
+{
+  const f = clone();
+  f.data.attentionSpans = Array.from({ length: 60 }, (_, i) => i + 1);
+  expectAccept(
+    'attentionSpans is capped at the recent window',
+    f,
+    (r) => r.envelope.data.attentionSpans.length === 20,
+  );
+}
+{
+  const f = clone();
+  f.data.attentionSpans = 'not-an-array';
+  expectAccept('malformed attentionSpans → empty', f, (r) => r.envelope.data.attentionSpans.length === 0);
 }
 {
   const f = clone();

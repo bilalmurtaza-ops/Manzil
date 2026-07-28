@@ -4,6 +4,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { Screen } from '../../src/components/Screen';
 import { getChapter, getSubject } from '../../src/data/syllabus';
+import { recommendedSessionMinutes } from '../../src/lib/focusGuard';
 import { daysUntil, generatePlan, localISO, rebalancePlan, todayISO } from '../../src/lib/planEngine';
 import { STUDY_TIME_MINUTES } from '../../src/lib/studyTime';
 import type { PlanSession } from '../../src/lib/types';
@@ -33,6 +34,7 @@ export default function PlanScreen() {
   const plan = useAppStore((s) => s.plan);
   const setPlan = useAppStore((s) => s.setPlan);
   const setProfile = useAppStore((s) => s.setProfile);
+  const attentionSpans = useAppStore((s) => s.attentionSpans);
   const [showRebalance, setShowRebalance] = useState(false);
 
   const upcoming = useMemo(() => {
@@ -58,6 +60,9 @@ export default function PlanScreen() {
 
   const remaining = plan ? plan.sessions.filter((s) => !s.done).length : 0;
   const countdown = profile ? Math.max(daysUntil(profile.examDate), 0) : 0;
+
+  // Null until Focus Guard has watched enough sessions to have an opinion.
+  const focusAdvice = recommendedSessionMinutes(attentionSpans);
 
   const rebalance = (minutes: number) => {
     if (!profile) return;
@@ -107,8 +112,19 @@ export default function PlanScreen() {
         {showRebalance && profile && (
           <Animated.View entering={FadeInDown.duration(300)} style={styles.rebalancePanel}>
             <Text style={styles.rebalanceTitle}>
-              Life changed? Pick your new daily time — the whole plan regenerates instantly.
+              Life changed? Pick your new daily time — your remaining work re-spreads
+              instantly and everything you&apos;ve finished stays done.
             </Text>
+            {/* Phrased as a suggestion, not a measurement: this number is
+                clamped into the engine's schedulable block range, so it is
+                advice derived from the measurement rather than the measurement
+                itself. */}
+            {focusAdvice !== null && (
+              <Text style={styles.focusAdvice}>
+                Based on your recent focus, Focus Guard suggests study blocks of about{' '}
+                {focusAdvice} minutes with real breaks between them.
+              </Text>
+            )}
             <View style={styles.chipRow}>
               {TIME_CHIPS.map((m) => (
                 <Pressable
@@ -213,6 +229,12 @@ const styles = StyleSheet.create({
     marginBottom: space.xl,
   },
   rebalanceTitle: { ...type.small, color: color.inkSoft, lineHeight: 19 },
+  focusAdvice: {
+    ...type.small,
+    color: color.greenMid,
+    lineHeight: 19,
+    marginTop: space.sm,
+  },
   chipRow: { flexDirection: 'row', gap: 8, marginTop: 12 },
   timeChip: {
     flex: 1,

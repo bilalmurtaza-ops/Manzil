@@ -25,7 +25,9 @@
           "speechRecognitionPermission": "Manzil uses speech recognition to turn what you say into a message for Ustaad."
         }
       ],
-      "expo-sharing"
+      "expo-sharing",
+      "expo-audio",
+      "expo-asset"
     ],
     "experiments": {
       "typedRoutes": true
@@ -35,6 +37,9 @@
     },
     "android": {
       "package": "pk.manzil.app",
+      "permissions": [
+        "android.permission.CAMERA"
+      ],
       "adaptiveIcon": {
         "backgroundColor": "#0E1B12",
         "foregroundImage": "./assets/android-icon-foreground.png",

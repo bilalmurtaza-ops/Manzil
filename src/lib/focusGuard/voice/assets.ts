@@ -1,0 +1,109 @@
+/**
+ * GENERATED FILE — do not edit by hand.
+ * Rewritten by `npx tsx scripts/generate-voice.ts` whenever the pack is built.
+ *
+ * WHY THIS IS GENERATED RATHER THAN WRITTEN: Metro resolves `require()` for
+ * assets statically, exactly like Expo's inlining of `process.env.EXPO_PUBLIC_*`
+ * (see `src/lib/gemini.ts`). A computed path such as
+ * `require(\`../../assets/voice/${file}\`)` type-checks and then bundles nothing,
+ * so every clip needs a literal require. Having the generator own this table is
+ * what guarantees the manifest in `lines.ts` and the bundled files can never
+ * drift apart — a mismatch is impossible rather than merely tested for.
+ *
+ * A missing file is a BUILD error, not a runtime one, so the table starts empty
+ * and stays empty until the pack is generated. With it empty the app builds and
+ * runs normally and the voice simply reports itself unavailable.
+ */
+
+/** filename from `lines.ts` -> Metro asset module id. */
+export const VOICE_ASSETS: Record<string, number> = {
+  'chime.wav': require('../../../../assets/voice/chime.wav'),
+  'alice-calibration-start-1.mp3': require('../../../../assets/voice/alice-calibration-start-1.mp3'),
+  'alice-calibration-ok-1.mp3': require('../../../../assets/voice/alice-calibration-ok-1.mp3'),
+  'alice-calibration-too-dark-1.mp3': require('../../../../assets/voice/alice-calibration-too-dark-1.mp3'),
+  'alice-calibration-no-face-1.mp3': require('../../../../assets/voice/alice-calibration-no-face-1.mp3'),
+  'alice-calibration-too-far-1.mp3': require('../../../../assets/voice/alice-calibration-too-far-1.mp3'),
+  'alice-calibration-too-restless-1.mp3': require('../../../../assets/voice/alice-calibration-too-restless-1.mp3'),
+  'alice-away-1.mp3': require('../../../../assets/voice/alice-away-1.mp3'),
+  'alice-away-2.mp3': require('../../../../assets/voice/alice-away-2.mp3'),
+  'alice-away-3.mp3': require('../../../../assets/voice/alice-away-3.mp3'),
+  'alice-away-4.mp3': require('../../../../assets/voice/alice-away-4.mp3'),
+  'alice-return-1.mp3': require('../../../../assets/voice/alice-return-1.mp3'),
+  'alice-return-2.mp3': require('../../../../assets/voice/alice-return-2.mp3'),
+  'alice-return-3.mp3': require('../../../../assets/voice/alice-return-3.mp3'),
+  'alice-return-4.mp3': require('../../../../assets/voice/alice-return-4.mp3'),
+  'alice-drowsy-1.mp3': require('../../../../assets/voice/alice-drowsy-1.mp3'),
+  'alice-drowsy-2.mp3': require('../../../../assets/voice/alice-drowsy-2.mp3'),
+  'alice-drowsy-3.mp3': require('../../../../assets/voice/alice-drowsy-3.mp3'),
+  'george-calibration-start-1.mp3': require('../../../../assets/voice/george-calibration-start-1.mp3'),
+  'george-calibration-ok-1.mp3': require('../../../../assets/voice/george-calibration-ok-1.mp3'),
+  'george-calibration-too-dark-1.mp3': require('../../../../assets/voice/george-calibration-too-dark-1.mp3'),
+  'george-calibration-no-face-1.mp3': require('../../../../assets/voice/george-calibration-no-face-1.mp3'),
+  'george-calibration-too-far-1.mp3': require('../../../../assets/voice/george-calibration-too-far-1.mp3'),
+  'george-calibration-too-restless-1.mp3': require('../../../../assets/voice/george-calibration-too-restless-1.mp3'),
+  'george-away-1.mp3': require('../../../../assets/voice/george-away-1.mp3'),
+  'george-away-2.mp3': require('../../../../assets/voice/george-away-2.mp3'),
+  'george-away-3.mp3': require('../../../../assets/voice/george-away-3.mp3'),
+  'george-away-4.mp3': require('../../../../assets/voice/george-away-4.mp3'),
+  'george-return-1.mp3': require('../../../../assets/voice/george-return-1.mp3'),
+  'george-return-2.mp3': require('../../../../assets/voice/george-return-2.mp3'),
+  'george-return-3.mp3': require('../../../../assets/voice/george-return-3.mp3'),
+  'george-return-4.mp3': require('../../../../assets/voice/george-return-4.mp3'),
+  'george-drowsy-1.mp3': require('../../../../assets/voice/george-drowsy-1.mp3'),
+  'george-drowsy-2.mp3': require('../../../../assets/voice/george-drowsy-2.mp3'),
+  'george-drowsy-3.mp3': require('../../../../assets/voice/george-drowsy-3.mp3'),
+  'sarah-calibration-start-1.mp3': require('../../../../assets/voice/sarah-calibration-start-1.mp3'),
+  'sarah-calibration-ok-1.mp3': require('../../../../assets/voice/sarah-calibration-ok-1.mp3'),
+  'sarah-calibration-too-dark-1.mp3': require('../../../../assets/voice/sarah-calibration-too-dark-1.mp3'),
+  'sarah-calibration-no-face-1.mp3': require('../../../../assets/voice/sarah-calibration-no-face-1.mp3'),
+  'sarah-calibration-too-far-1.mp3': require('../../../../assets/voice/sarah-calibration-too-far-1.mp3'),
+  'sarah-calibration-too-restless-1.mp3': require('../../../../assets/voice/sarah-calibration-too-restless-1.mp3'),
+  'sarah-away-1.mp3': require('../../../../assets/voice/sarah-away-1.mp3'),
+  'sarah-away-2.mp3': require('../../../../assets/voice/sarah-away-2.mp3'),
+  'sarah-away-3.mp3': require('../../../../assets/voice/sarah-away-3.mp3'),
+  'sarah-away-4.mp3': require('../../../../assets/voice/sarah-away-4.mp3'),
+  'sarah-return-1.mp3': require('../../../../assets/voice/sarah-return-1.mp3'),
+  'sarah-return-2.mp3': require('../../../../assets/voice/sarah-return-2.mp3'),
+  'sarah-return-3.mp3': require('../../../../assets/voice/sarah-return-3.mp3'),
+  'sarah-return-4.mp3': require('../../../../assets/voice/sarah-return-4.mp3'),
+  'sarah-drowsy-1.mp3': require('../../../../assets/voice/sarah-drowsy-1.mp3'),
+  'sarah-drowsy-2.mp3': require('../../../../assets/voice/sarah-drowsy-2.mp3'),
+  'sarah-drowsy-3.mp3': require('../../../../assets/voice/sarah-drowsy-3.mp3'),
+  'brian-calibration-start-1.mp3': require('../../../../assets/voice/brian-calibration-start-1.mp3'),
+  'brian-calibration-ok-1.mp3': require('../../../../assets/voice/brian-calibration-ok-1.mp3'),
+  'brian-calibration-too-dark-1.mp3': require('../../../../assets/voice/brian-calibration-too-dark-1.mp3'),
+  'brian-calibration-no-face-1.mp3': require('../../../../assets/voice/brian-calibration-no-face-1.mp3'),
+  'brian-calibration-too-far-1.mp3': require('../../../../assets/voice/brian-calibration-too-far-1.mp3'),
+  'brian-calibration-too-restless-1.mp3': require('../../../../assets/voice/brian-calibration-too-restless-1.mp3'),
+  'brian-away-1.mp3': require('../../../../assets/voice/brian-away-1.mp3'),
+  'brian-away-2.mp3': require('../../../../assets/voice/brian-away-2.mp3'),
+  'brian-away-3.mp3': require('../../../../assets/voice/brian-away-3.mp3'),
+  'brian-away-4.mp3': require('../../../../assets/voice/brian-away-4.mp3'),
+  'brian-return-1.mp3': require('../../../../assets/voice/brian-return-1.mp3'),
+  'brian-return-2.mp3': require('../../../../assets/voice/brian-return-2.mp3'),
+  'brian-return-3.mp3': require('../../../../assets/voice/brian-return-3.mp3'),
+  'brian-return-4.mp3': require('../../../../assets/voice/brian-return-4.mp3'),
+  'brian-drowsy-1.mp3': require('../../../../assets/voice/brian-drowsy-1.mp3'),
+  'brian-drowsy-2.mp3': require('../../../../assets/voice/brian-drowsy-2.mp3'),
+  'brian-drowsy-3.mp3': require('../../../../assets/voice/brian-drowsy-3.mp3'),
+  'river-calibration-start-1.mp3': require('../../../../assets/voice/river-calibration-start-1.mp3'),
+  'river-calibration-ok-1.mp3': require('../../../../assets/voice/river-calibration-ok-1.mp3'),
+  'river-calibration-too-dark-1.mp3': require('../../../../assets/voice/river-calibration-too-dark-1.mp3'),
+  'river-calibration-no-face-1.mp3': require('../../../../assets/voice/river-calibration-no-face-1.mp3'),
+  'river-calibration-too-far-1.mp3': require('../../../../assets/voice/river-calibration-too-far-1.mp3'),
+  'river-calibration-too-restless-1.mp3': require('../../../../assets/voice/river-calibration-too-restless-1.mp3'),
+  'river-away-1.mp3': require('../../../../assets/voice/river-away-1.mp3'),
+  'river-away-2.mp3': require('../../../../assets/voice/river-away-2.mp3'),
+  'river-away-3.mp3': require('../../../../assets/voice/river-away-3.mp3'),
+  'river-away-4.mp3': require('../../../../assets/voice/river-away-4.mp3'),
+  'river-return-1.mp3': require('../../../../assets/voice/river-return-1.mp3'),
+  'river-return-2.mp3': require('../../../../assets/voice/river-return-2.mp3'),
+  'river-return-3.mp3': require('../../../../assets/voice/river-return-3.mp3'),
+  'river-return-4.mp3': require('../../../../assets/voice/river-return-4.mp3'),
+  'river-drowsy-1.mp3': require('../../../../assets/voice/river-drowsy-1.mp3'),
+  'river-drowsy-2.mp3': require('../../../../assets/voice/river-drowsy-2.mp3'),
+  'river-drowsy-3.mp3': require('../../../../assets/voice/river-drowsy-3.mp3'),
+};
+
+/** False until the pack has been generated. Voice stays silent when false. */
+export const VOICE_PACK_INSTALLED = Object.keys(VOICE_ASSETS).length > 0;

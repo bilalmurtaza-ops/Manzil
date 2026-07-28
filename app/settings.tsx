@@ -28,6 +28,9 @@ import {
 import { parseBackup, summarize } from '../src/lib/backupSchema';
 import { requestBackup } from '../src/lib/backupScheduler';
 import { BackupError } from '../src/lib/cloudBackup';
+import { VoicePicker } from '../src/components/VoicePicker';
+import { isSupported as isFocusGuardSupported } from '../src/lib/focusGuard/camera';
+import { previewVoice } from '../src/lib/focusGuard/voice/player';
 import { geminiKeyPool } from '../src/lib/gemini';
 import { generatePlan, maintainPlan } from '../src/lib/planEngine';
 import { isCloudConfigured } from '../src/lib/supabase';
@@ -45,6 +48,12 @@ export default function SettingsScreen() {
   const setPlan = useAppStore((s) => s.setPlan);
   const vibrationEnabled = useAppStore((s) => s.vibrationEnabled !== false);
   const toggleVibration = useAppStore((s) => s.toggleVibration);
+  const focusGuardEnabled = useAppStore((s) => s.focusGuardEnabled);
+  const toggleFocusGuard = useAppStore((s) => s.toggleFocusGuard);
+  const focusVoiceEnabled = useAppStore((s) => s.focusVoiceEnabled);
+  const toggleFocusVoice = useAppStore((s) => s.toggleFocusVoice);
+  const focusVoiceId = useAppStore((s) => s.focusVoiceId);
+  const setFocusVoiceId = useAppStore((s) => s.setFocusVoiceId);
   const quizAttempts = useAppStore((s) => s.quizAttempts);
   const flashcards = useAppStore((s) => s.flashcards);
   const chatHistory = useAppStore((s) => s.chatHistory);
@@ -243,6 +252,26 @@ export default function SettingsScreen() {
   // env values at module load, so there is nothing to subscribe to.
   const keyPool = geminiKeyPool();
 
+  // False on web, and false on a dev client built before the camera modules
+  // were added — the toggle disables itself rather than promising something
+  // this build cannot deliver.
+  const focusGuardSupported = isFocusGuardSupported();
+
+  const handleToggleFocusGuard = () => {
+    triggerHapticIfEnabled();
+    toggleFocusGuard();
+  };
+
+  const handleToggleFocusVoice = () => {
+    triggerHapticIfEnabled();
+    toggleFocusVoice();
+  };
+
+  const handleSelectVoice = (id: string) => {
+    triggerHapticIfEnabled();
+    setFocusVoiceId(id);
+  };
+
   const backupMeta = () => ({
     appVersion: Constants.expoConfig?.version ?? '',
     platform: Platform.OS,
@@ -434,6 +463,86 @@ export default function SettingsScreen() {
                   ]}
                 />
               </Pressable>
+            </View>
+
+            <View style={styles.divider} />
+
+            {/* Focus Guard. Default off, and the explainer below is deliberately
+                specific: a camera pointed at a student is a serious thing to ask
+                for, so the ask states exactly what is and is not captured. */}
+            <View style={styles.settingRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.settingTitle}>Focus Guard</Text>
+                <Text style={styles.settingSub}>
+                  Uses the front camera during study sessions to notice when you
+                  step away or lose focus, and pauses the timer while you&apos;re gone.
+                </Text>
+              </View>
+              <Pressable
+                style={[
+                  styles.toggleTrack,
+                  focusGuardEnabled ? styles.toggleTrackOn : styles.toggleTrackOff,
+                ]}
+                onPress={handleToggleFocusGuard}
+                disabled={!focusGuardSupported}
+              >
+                <View
+                  style={[
+                    styles.toggleThumb,
+                    focusGuardEnabled ? styles.toggleThumbOn : styles.toggleThumbOff,
+                  ]}
+                />
+              </Pressable>
+            </View>
+
+            {/* Voice is its own opt-in, not a sub-setting of Focus Guard: a
+                phone that starts talking in a room shared with family is a
+                different kind of consent from a camera that stays silent. */}
+            {focusGuardSupported && focusGuardEnabled && (
+              <View style={styles.settingRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.settingTitle}>Spoken cues</Text>
+                  <Text style={styles.settingSub}>
+                    Says a short line out loud when setting up, when you step away,
+                    and if you look sleepy — the moments you aren&apos;t reading the screen.
+                  </Text>
+                </View>
+                <Pressable
+                  style={[
+                    styles.toggleTrack,
+                    focusVoiceEnabled ? styles.toggleTrackOn : styles.toggleTrackOff,
+                  ]}
+                  onPress={handleToggleFocusVoice}
+                >
+                  <View
+                    style={[
+                      styles.toggleThumb,
+                      focusVoiceEnabled ? styles.toggleThumbOn : styles.toggleThumbOff,
+                    ]}
+                  />
+                </Pressable>
+              </View>
+            )}
+
+            {focusGuardSupported && focusGuardEnabled && focusVoiceEnabled && (
+              <Animated.View entering={FadeInDown.duration(260)} style={styles.voiceBlock}>
+                <Text style={styles.voiceHeading}>CHOOSE A VOICE — آواز</Text>
+                <VoicePicker
+                  selectedId={focusVoiceId}
+                  onSelect={handleSelectVoice}
+                  onPreview={previewVoice}
+                />
+              </Animated.View>
+            )}
+
+            <View style={styles.noticeBox}>
+              <Text style={styles.noticeText}>
+                {focusGuardSupported
+                  ? 'Everything happens on this phone. No photo or video is ever saved, ' +
+                    'and nothing leaves the device — Manzil only keeps a few numbers ' +
+                    'about head position. Turn it off any time, including mid-session.'
+                  : 'Focus Guard needs the phone app with camera support — it can’t run here.'}
+              </Text>
             </View>
           </View>
 
@@ -774,6 +883,10 @@ export default function SettingsScreen() {
             <Text style={styles.appTitle}>Manzil · منزل</Text>
             <Text style={styles.appVersion}>Version 1.0.0 · Contest Edition</Text>
             <Text style={styles.appSub}>100% Offline Plan Engine · Punjab BISE Board Aligned</Text>
+            {/* Required by the ElevenLabs free-tier terms the voice pack was
+                generated under. Regenerating with another vendor means editing
+                this line and re-running scripts/generate-voice.ts. */}
+            <Text style={styles.appSub}>Focus Guard voice by ElevenLabs · elevenlabs.io</Text>
           </View>
         </Animated.View>
       </ScrollView>
@@ -1037,5 +1150,15 @@ const styles = StyleSheet.create({
   },
   appTitle: { fontFamily: font.bold, fontSize: 16, color: color.ink },
   appVersion: { ...type.smallMedium, color: color.inkSoft, marginTop: 3 },
+
+  voiceBlock: { marginTop: space.sm },
+  voiceHeading: {
+    fontFamily: font.semibold,
+    fontSize: 11,
+    letterSpacing: 1.3,
+    textTransform: 'uppercase',
+    color: color.inkFaint,
+    marginBottom: 2,
+  },
   appSub: { ...type.micro, color: color.inkFaint, marginTop: 4 },
 });

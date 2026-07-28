@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import { completedOn, localISO, todayISO } from '../lib/planEngine';
+import { DEFAULT_VOICE_ID } from '../lib/focusGuard/voice/lines';
 import type {
   ChatMessage,
   Flashcard,
@@ -21,6 +22,25 @@ interface AppState {
   activeDays: string[];
   /** App-wide haptic feedback / vibration preference. Default: true. */
   vibrationEnabled: boolean;
+  /**
+   * Focus Guard opt-in. Default FALSE, and only an explicit tap in Settings
+   * flips it — a camera that watches a student must never start unasked.
+   */
+  focusGuardEnabled: boolean;
+  /**
+   * Spoken cues during a study session. Separate from `focusGuardEnabled` and
+   * also default FALSE: a voice that speaks aloud in a room shared with family
+   * deserves its own consent, not to be switched on as a side effect.
+   */
+  focusVoiceEnabled: boolean;
+  /** Which of FOCUS_VOICES speaks. Validated on restore — see backupSchema. */
+  focusVoiceId: string;
+  /**
+   * Longest unbroken focus, in minutes, observed in recent sessions. Feeds the
+   * session-length advice in planEngine. Plain numbers only: no timestamps, no
+   * per-sample data, nothing that could reconstruct what the camera saw.
+   */
+  attentionSpans: number[];
 
   setProfile: (profile: StudentProfile) => void;
   setPlan: (plan: StudyPlan) => void;
@@ -32,6 +52,10 @@ interface AppState {
   appendChat: (message: ChatMessage) => void;
   clearChat: () => void;
   toggleVibration: () => void;
+  toggleFocusGuard: () => void;
+  toggleFocusVoice: () => void;
+  setFocusVoiceId: (id: string) => void;
+  recordAttentionSpan: (minutes: number) => void;
   resetAll: () => void;
 }
 
@@ -57,6 +81,10 @@ export type BackedUpState = Omit<
   | 'appendChat'
   | 'clearChat'
   | 'toggleVibration'
+  | 'toggleFocusGuard'
+  | 'toggleFocusVoice'
+  | 'setFocusVoiceId'
+  | 'recordAttentionSpan'
   | 'resetAll'
 >;
 
@@ -68,6 +96,10 @@ export const BACKED_UP_KEYS = [
   'chatHistory',
   'activeDays',
   'vibrationEnabled',
+  'focusGuardEnabled',
+  'focusVoiceEnabled',
+  'focusVoiceId',
+  'attentionSpans',
 ] as const satisfies readonly (keyof BackedUpState)[];
 
 // NOTE: todayISO is imported from planEngine rather than redefined here. It used
@@ -86,6 +118,10 @@ export const useAppStore = create<AppState>()(
       chatHistory: [],
       activeDays: [],
       vibrationEnabled: true,
+      focusGuardEnabled: false,
+      focusVoiceEnabled: false,
+      focusVoiceId: DEFAULT_VOICE_ID,
+      attentionSpans: [],
 
       setProfile: (profile) => set({ profile }),
       setPlan: (plan) => set({ plan }),
@@ -145,6 +181,19 @@ export const useAppStore = create<AppState>()(
           vibrationEnabled: s.vibrationEnabled === false ? true : false,
         })),
 
+      toggleFocusGuard: () =>
+        set((s) => ({ focusGuardEnabled: !s.focusGuardEnabled })),
+
+      toggleFocusVoice: () => set((s) => ({ focusVoiceEnabled: !s.focusVoiceEnabled })),
+
+      setFocusVoiceId: (id) => set({ focusVoiceId: id }),
+
+      // Keep only a recent window: attention span drifts with sleep, stress and
+      // exam proximity, so a span measured two months ago should not still be
+      // shaping today's advice.
+      recordAttentionSpan: (minutes) =>
+        set((s) => ({ attentionSpans: [...s.attentionSpans, minutes].slice(-20) })),
+
       resetAll: () =>
         set({
           profile: null,
@@ -154,6 +203,10 @@ export const useAppStore = create<AppState>()(
           chatHistory: [],
           activeDays: [],
           vibrationEnabled: true,
+          focusGuardEnabled: false,
+          focusVoiceEnabled: false,
+          focusVoiceId: DEFAULT_VOICE_ID,
+          attentionSpans: [],
         }),
     }),
     {

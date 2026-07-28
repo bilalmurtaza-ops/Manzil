@@ -1,3 +1,4 @@
+import { DEFAULT_VOICE_ID, isKnownVoice } from './focusGuard/voice/lines';
 import type { BackedUpState } from '../store/useAppStore';
 import type {
   ChatMessage,
@@ -278,6 +279,12 @@ export function buildEnvelope(state: BackupData, meta: EnvelopeMeta): BackupEnve
     chatHistory: state.chatHistory,
     activeDays: state.activeDays,
     vibrationEnabled: state.vibrationEnabled,
+    // Preferences and derived numbers only — Focus Guard never produces
+    // anything else. No frame, landmark or per-sample reading exists to back up.
+    focusGuardEnabled: state.focusGuardEnabled,
+    focusVoiceEnabled: state.focusVoiceEnabled,
+    focusVoiceId: state.focusVoiceId,
+    attentionSpans: state.attentionSpans,
   };
 
   const serialized = JSON.stringify(data);
@@ -435,6 +442,24 @@ export function parseBackup(raw: unknown): ParseResult {
     // Matches the store's own `!== false` reading convention: only an explicit
     // false disables haptics.
     vibrationEnabled: isBool(data.vibrationEnabled) ? data.vibrationEnabled : true,
+    // Opposite default to haptics on purpose: a restored backup must never
+    // silently switch a camera on. Only an explicit `true` enables it.
+    focusGuardEnabled: data.focusGuardEnabled === true,
+    // Same strict reading as the camera flag: a restored backup must never make
+    // a phone start speaking out loud on its own.
+    focusVoiceEnabled: data.focusVoiceEnabled === true,
+    // A backup from a build with a different voice list must not leave the
+    // student pointing at a voice this build cannot play.
+    focusVoiceId:
+      isStr(data.focusVoiceId) && isKnownVoice(data.focusVoiceId)
+        ? data.focusVoiceId
+        : DEFAULT_VOICE_ID,
+    attentionSpans: Array.isArray(data.attentionSpans)
+      ? data.attentionSpans
+          .filter((n: unknown): n is number => isNum(n) && n > 0 && n <= 600)
+          .map((n) => Math.round(n))
+          .slice(-20)
+      : [],
   };
 
   const sessions = restored.plan?.sessions ?? [];

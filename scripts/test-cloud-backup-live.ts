@@ -69,6 +69,10 @@ function stateFor(classLevel: ClassLevel, group: StudyGroup): BackupData {
     chatHistory: [],
     activeDays: [],
     vibrationEnabled: true,
+    focusGuardEnabled: false,
+    focusVoiceEnabled: false,
+    focusVoiceId: 'alice',
+    attentionSpans: [],
   };
 }
 

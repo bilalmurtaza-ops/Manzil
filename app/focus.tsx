@@ -4,10 +4,28 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { FocusTimeline } from '../src/components/FocusTimeline';
 import { ProgressRing } from '../src/components/ProgressRing';
 import { getChapter, getSubject } from '../src/data/syllabus';
+import { FocusCameraView, useFocusGuard } from '../src/lib/focusGuard/camera';
+import { attentionSpanMinutes } from '../src/lib/focusGuard';
+import { playCue, preloadVoicePack } from '../src/lib/focusGuard/voice/player';
 import { useAppStore } from '../src/store/useAppStore';
 import { color, font, radius, space, type } from '../src/theme/tokens';
+
+/**
+ * Live status copy. Phrased as observations, never accusations — "looking away"
+ * describes what the camera saw; "you were distracted" would be a verdict the
+ * data does not support.
+ */
+const GUARD_LIVE_TEXT: Record<string, string> = {
+  focused: 'Focus Guard — on track',
+  glance: 'Focus Guard — on track',
+  distracted: 'Looking away from your work',
+  away: 'Timer paused until you are back',
+  drowsy: 'Eyes closed — take a breath and stretch',
+  uncertain: 'Focus Guard — can’t see clearly, not scoring',
+};
 
 export default function FocusScreen() {
   const router = useRouter();
@@ -29,8 +47,64 @@ export default function FocusScreen() {
   const [finished, setFinished] = useState(false);
   const finishedRef = useRef(false);
 
+  const focusGuardEnabled = useAppStore((s) => s.focusGuardEnabled);
+  const focusVoiceEnabled = useAppStore((s) => s.focusVoiceEnabled);
+  const vibrationEnabled = useAppStore((s) => s.vibrationEnabled);
+  const recordAttentionSpan = useAppStore((s) => s.recordAttentionSpan);
+
+  const focus = useFocusGuard({
+    enabled: focusGuardEnabled,
+    paused: !running,
+    finished,
+  });
+
+  /**
+   * The clock only counts time the student was actually there.
+   *
+   * This is the quiet heart of the feature: a 25-minute session now means 25
+   * minutes of study, not 25 minutes of a timer running in an empty room. It
+   * also means being away is never a punishment — the time simply isn't spent.
+   */
+  const timerRunning = running && !focus.away;
+
+  // A single soft tap for sustained distraction, already rate-limited to at
+  // most once every two minutes inside the hook. Never a sound, never a nag.
   useEffect(() => {
-    if (!running || finished) return;
+    if (focus.nudge === 0 || !vibrationEnabled) return;
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft);
+  }, [focus.nudge, vibrationEnabled]);
+
+  // Resolve the clips up front so the first cue is instant — a spoken nudge
+  // that arrives two seconds late is worse than none at all. Missing clips are
+  // reported, never thrown: a half-installed pack degrades to silence.
+  useEffect(() => {
+    if (!focusVoiceEnabled) return;
+    void preloadVoicePack().then((missing) => {
+      if (missing.length > 0) {
+        console.warn(`Focus Guard voice: ${missing.length} clip(s) unavailable`);
+      }
+    });
+  }, [focusVoiceEnabled]);
+
+  // Speak on token change, not on state — the hook decides WHEN (cues.ts owns
+  // the transition rules and rate limiting), this only plays.
+  useEffect(() => {
+    if (!focusVoiceEnabled || !focus.voiceCue) return;
+    playCue(focus.voiceCue);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focus.voiceCue?.token, focusVoiceEnabled]);
+
+  // Remember how long their concentration actually held, so the plan engine can
+  // stop prescribing 45-minute blocks to someone whose attention breaks at 15.
+  useEffect(() => {
+    if (!finished || !focus.report) return;
+    const span = attentionSpanMinutes(focus.report);
+    if (span !== null && span > 0) recordAttentionSpan(span);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [finished, focus.report]);
+
+  useEffect(() => {
+    if (!timerRunning || finished) return;
     const t = setInterval(() => {
       setSecondsLeft((s) => {
         if (s <= 1) {
@@ -41,7 +115,7 @@ export default function FocusScreen() {
       });
     }, 1000);
     return () => clearInterval(t);
-  }, [running, finished]);
+  }, [timerRunning, finished]);
 
   useEffect(() => {
     if (secondsLeft === 0 && !finishedRef.current) {
@@ -84,6 +158,38 @@ export default function FocusScreen() {
             </Pressable>
           </View>
 
+          {/* Small, visible, and never hidden — the student can always see that
+              the camera is on and what it can see. */}
+          <FocusCameraView status={focus} />
+
+          {focusGuardEnabled && focus.phase !== 'idle' && (
+            <View style={styles.guardBar}>
+              <View
+                style={[
+                  styles.guardDot,
+                  {
+                    backgroundColor:
+                      focus.phase !== 'running'
+                        ? color.inkFaint
+                        : focus.state === 'focused' || focus.state === 'glance'
+                          ? color.greenMid
+                          : focus.state === 'uncertain'
+                            ? color.inkFaint
+                            : color.gold,
+                  },
+                ]}
+              />
+              <Text style={styles.guardText} numberOfLines={1}>
+                {focus.message ??
+                  (focus.phase === 'calibrating'
+                    ? 'Focus Guard — settle into your reading position'
+                    : focus.phase === 'permission'
+                      ? 'Focus Guard — waiting for camera access'
+                      : GUARD_LIVE_TEXT[focus.state])}
+              </Text>
+            </View>
+          )}
+
           <View style={styles.center}>
             <Text style={styles.subjectText}>{subject?.name}</Text>
             <Text style={styles.chapterText} numberOfLines={2}>
@@ -102,7 +208,11 @@ export default function FocusScreen() {
                   {mm}:{ss.toString().padStart(2, '0')}
                 </Text>
                 <Text style={styles.timerSub}>
-                  {running ? 'focus — phone down' : 'paused'}
+                  {focus.away
+                    ? 'paused — waiting for you'
+                    : running
+                      ? 'focus — phone down'
+                      : 'paused'}
                 </Text>
               </ProgressRing>
             </View>
@@ -140,6 +250,52 @@ export default function FocusScreen() {
           <Animated.Text entering={FadeIn.delay(250).duration(500)} style={styles.doneMeta}>
             {subject?.name} · {chapter?.name}
           </Animated.Text>
+
+          {focus.report && focus.report.segments.length > 1 && (
+            <Animated.View
+              entering={FadeInDown.delay(320).duration(500)}
+              style={styles.reportCard}
+            >
+              <View style={styles.reportHead}>
+                <Text style={styles.reportTitle}>Focus Guard</Text>
+                {focus.report.score !== null && (
+                  <Text style={styles.reportScore}>
+                    {Math.round(focus.report.score * 100)}% focused
+                  </Text>
+                )}
+              </View>
+
+              <FocusTimeline segments={focus.report.segments} />
+
+              <Text style={styles.reportLine}>
+                {(() => {
+                  const r = focus.report;
+                  const bits: string[] = [];
+                  const mins = (ms: number) => Math.round(ms / 60000);
+                  if (r.longestFocusMs > 0)
+                    bits.push(`longest stretch ${mins(r.longestFocusMs)} min`);
+                  if (r.distractionCount > 0)
+                    bits.push(
+                      `${r.distractionCount} time${r.distractionCount === 1 ? '' : 's'} looking away`,
+                    );
+                  if (r.awayCount > 0)
+                    bits.push(`away ${mins(r.awayMs)} min`);
+                  // Unmonitored time is always disclosed rather than quietly
+                  // folded into the score.
+                  if (r.uncertainMs > 30_000)
+                    bits.push(`${mins(r.uncertainMs)} min not monitored`);
+                  return bits.join(' · ');
+                })()}
+              </Text>
+
+              {focus.report.score === null && (
+                <Text style={styles.reportNote}>
+                  Too little was seen to give a score — that’s not a bad session,
+                  just an unmeasured one.
+                </Text>
+              )}
+            </Animated.View>
+          )}
           <Animated.View entering={FadeInDown.delay(400).duration(500)} style={{ marginTop: 48, width: '100%', paddingHorizontal: 40 }}>
             <Pressable style={styles.doneButton} onPress={() => router.back()}>
               <Text style={styles.doneButtonText}>Back to today</Text>
@@ -196,6 +352,51 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   controlPrimaryText: { fontFamily: font.semibold, fontSize: 15, color: color.paperOnDark },
+
+  guardBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    alignSelf: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: radius.full,
+    backgroundColor: 'rgba(242,238,227,0.08)',
+    maxWidth: '86%',
+  },
+  guardDot: { width: 8, height: 8, borderRadius: radius.full },
+  guardText: { ...type.small, color: 'rgba(242,238,227,0.75)', flexShrink: 1 },
+
+  reportCard: {
+    marginTop: 28,
+    marginHorizontal: 24,
+    padding: space.lg,
+    borderRadius: radius.lg,
+    backgroundColor: 'rgba(242,238,227,0.07)',
+    borderWidth: 1,
+    borderColor: 'rgba(242,238,227,0.12)',
+  },
+  reportHead: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'baseline',
+    marginBottom: 10,
+  },
+  reportTitle: {
+    fontFamily: font.semibold,
+    fontSize: 12,
+    letterSpacing: 1.4,
+    textTransform: 'uppercase',
+    color: 'rgba(242,238,227,0.6)',
+  },
+  reportScore: { fontFamily: font.bold, fontSize: 17, color: color.paperOnDark },
+  reportLine: {
+    ...type.small,
+    color: 'rgba(242,238,227,0.65)',
+    marginTop: 10,
+    lineHeight: 18,
+  },
+  reportNote: { ...type.small, color: 'rgba(242,238,227,0.5)', marginTop: 8, lineHeight: 18 },
 
   doneUrdu: { fontFamily: font.urduBold, fontSize: 44, lineHeight: 96, color: color.gold },
   doneTitle: { ...type.title, color: color.paperOnDark },
