@@ -48,21 +48,45 @@ jobs:
           fi
 
           # Two endpoints, because which one Supabase's (undocumented) activity
-          # heuristic counts is not published. /rest/v1/ needs no table and no
-          # grants; /auth/v1/health is a separate service.
-          rest=$(curl -sS --max-time 30 -o /dev/null -w '%{http_code}' \
-            "${SUPABASE_URL}/rest/v1/" -H "apikey: ${SUPABASE_ANON_KEY}")
-          auth=$(curl -sS --max-time 30 -o /dev/null -w '%{http_code}' \
+          # heuristic counts is not published. Both are on GoTrue but exercise
+          # different paths: /health is service liveness, /settings reads the
+          # project's own auth configuration.
+          #
+          # ── DO NOT "fix" this by pinging /rest/v1/ ────────────────────────────
+          # It was doing exactly that until 2026-07-28 and had been failing since at
+          # least 07-25. Verified live against this project, both are dead ends and
+          # the only ways to make them pass are things this repo forbids:
+          #
+          #   /rest/v1/           -> 401 {"message":"Secret API key required",
+          #                              "hint":"Only secret API keys can be used
+          #                              for this endpoint."}
+          #      Since the move to sb_publishable_ keys, the REST root is reachable
+          #      only with an sb_secret_ key. That key must never enter this repo or
+          #      any GitHub secret — see src/lib/supabase.ts.
+          #
+          #   /rest/v1/backups    -> 401 {"code":"42501"} permission denied
+          #      This is `revoke all on public.backups from anon` in
+          #      supabase/schema.sql WORKING. That revoke is precisely what makes
+          #      shipping the publishable key inside the app safe. Granting anon
+          #      SELECT to turn this badge green would trade the security model for
+          #      a green tick. Never do it.
+          #
+          # Note the old failing runs were still issuing real requests to the
+          # project, so the keepalive was functionally working the whole time — only
+          # the assertion was wrong. Do not read past red runs as "it was paused".
+          health=$(curl -sS --max-time 30 -o /dev/null -w '%{http_code}' \
             "${SUPABASE_URL}/auth/v1/health" -H "apikey: ${SUPABASE_ANON_KEY}")
+          settings=$(curl -sS --max-time 30 -o /dev/null -w '%{http_code}' \
+            "${SUPABASE_URL}/auth/v1/settings" -H "apikey: ${SUPABASE_ANON_KEY}")
 
-          echo "rest=${rest} auth=${auth}"
+          echo "health=${health} settings=${settings}"
 
-          if [ "${rest}" != "200" ]; then
-            echo "::error::REST endpoint returned ${rest} — the project may be paused."
+          if [ "${health}" != "200" ]; then
+            echo "::error::/auth/v1/health returned ${health} — the project may be paused."
             exit 1
           fi
-          if [ "${auth}" != "200" ]; then
-            echo "::error::Auth endpoint returned ${auth} — the project may be paused."
+          if [ "${settings}" != "200" ]; then
+            echo "::error::/auth/v1/settings returned ${settings} — the project may be paused."
             exit 1
           fi
 
