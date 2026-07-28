@@ -30,7 +30,7 @@ import { requestBackup } from '../src/lib/backupScheduler';
 import { BackupError } from '../src/lib/cloudBackup';
 import { VoicePicker } from '../src/components/VoicePicker';
 import { isSupported as isFocusGuardSupported } from '../src/lib/focusGuard/camera';
-import { previewVoice } from '../src/lib/focusGuard/voice/player';
+import { preloadVoicePack, previewVoice, stopSpeaking } from '../src/lib/focusGuard/voice/player';
 import { geminiKeyPool } from '../src/lib/gemini';
 import { generatePlan, maintainPlan } from '../src/lib/planEngine';
 import { isCloudConfigured } from '../src/lib/supabase';
@@ -268,6 +268,22 @@ export default function SettingsScreen() {
     triggerHapticIfEnabled();
     toggleFocusVoice();
   };
+
+  /**
+   * Warm the clip cache as soon as the picker is on screen.
+   *
+   * Not required for correctness any more — `previewVoice` resolves on demand —
+   * but it turns the first tap from "resolve then play" into "play". Previously
+   * NOTHING on this screen preloaded, and preview read straight out of the
+   * cache, so the first tap was silent unless a focus session had run first.
+   */
+  useEffect(() => {
+    if (!(focusGuardSupported && focusGuardEnabled && focusVoiceEnabled)) return;
+    void preloadVoicePack();
+  }, [focusGuardSupported, focusGuardEnabled, focusVoiceEnabled]);
+
+  // Leaving Settings mid-preview must not leave a voice talking to an empty room.
+  useEffect(() => () => stopSpeaking(), []);
 
   const handleToggleFocusVoiceDistracted = () => {
     triggerHapticIfEnabled();

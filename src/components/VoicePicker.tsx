@@ -1,8 +1,12 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, {
+  cancelAnimation,
+  Easing,
+  interpolate,
   useAnimatedStyle,
   useSharedValue,
+  withDelay,
   withRepeat,
   withTiming,
 } from 'react-native-reanimated';
@@ -21,34 +25,82 @@ import { color, font, radius, space, type } from '../theme/tokens';
  * the whole reason the pack is pre-rendered rather than fetched.
  */
 
+/** Bar geometry. Kept here so the collapsed width matches the rendered bars exactly. */
+const BAR_W = 2.5;
+const BAR_GAP = 2;
+const BAR_COUNT = 3;
+const BARS_W = BAR_COUNT * BAR_W + (BAR_COUNT - 1) * BAR_GAP;
+const BAR_REST = 3;
+const BAR_PEAK = 14;
+
 /**
  * A three-bar equaliser drawn on the selected row while it speaks.
  *
  * Purely decorative — it does NOT track amplitude, unlike `VoiceWaveform`,
  * which genuinely follows the microphone. Named and commented so nobody later
  * mistakes it for a real level meter.
+ *
+ * It stays MOUNTED at all times and animates its own visibility. Rendering it
+ * conditionally made it vanish the instant the preview ended, which reads as a
+ * glitch rather than a finish; width, scale and opacity are interpolated from
+ * one `shown` value so the row's layout closes up smoothly instead of snapping.
  */
 function SpeakingBars({ active }: { active: boolean }) {
+  const shown = useSharedValue(0);
+
+  useEffect(() => {
+    shown.value = withTiming(active ? 1 : 0, {
+      // Slower leaving than arriving: an exit that matches the entrance speed
+      // still reads as a snap. Ease-in-out lets it settle rather than stop.
+      duration: active ? 200 : 420,
+      easing: active ? Easing.out(Easing.quad) : Easing.inOut(Easing.cubic),
+    });
+  }, [active, shown]);
+
+  const wrap = useAnimatedStyle(() => ({
+    opacity: shown.value,
+    width: interpolate(shown.value, [0, 1], [0, BARS_W]),
+    marginLeft: interpolate(shown.value, [0, 1], [0, 8]),
+    transform: [{ scale: interpolate(shown.value, [0, 1], [0.8, 1]) }],
+  }));
+
   return (
-    <View style={styles.bars}>
-      {[0, 1, 2].map((i) => (
+    <Animated.View style={[styles.bars, wrap]}>
+      {Array.from({ length: BAR_COUNT }, (_, i) => (
         <Bar key={i} index={i} active={active} />
       ))}
-    </View>
+    </Animated.View>
   );
 }
 
 function Bar({ index, active }: { index: number; active: boolean }) {
-  const h = useSharedValue(6);
+  const h = useSharedValue(BAR_REST);
+
+  useEffect(() => {
+    if (active) {
+      // Different durations per bar so the three drift out of phase on their
+      // own — a shared clock with offsets would march them in lockstep.
+      h.value = withRepeat(
+        withTiming(BAR_PEAK - index * 2, {
+          duration: 420 + index * 90,
+          easing: Easing.inOut(Easing.quad),
+        }),
+        -1,
+        true,
+      );
+    } else {
+      // Cancel first: without this the repeat keeps fighting the settle and the
+      // bar twitches on its way down.
+      cancelAnimation(h);
+      h.value = withDelay(
+        index * 55, // left-to-right settle, so it reads as winding down
+        withTiming(BAR_REST, { duration: 300, easing: Easing.out(Easing.cubic) }),
+      );
+    }
+    return () => cancelAnimation(h);
+  }, [active, index, h]);
+
   const style = useAnimatedStyle(() => ({ height: h.value }));
-  if (active && h.value === 6) {
-    h.value = withRepeat(
-      withTiming(14 - index * 2, { duration: 420 + index * 90 }),
-      -1,
-      true,
-    );
-  }
-  if (!active && h.value !== 6) h.value = withTiming(6, { duration: 160 });
   return <Animated.View style={[styles.bar, style]} />;
 }
 
@@ -67,6 +119,9 @@ function Tick({ size = 13 }: { size?: number }) {
   );
 }
 
+/** Roughly the preview line plus a beat. The pack is fixed, so a constant is honest. */
+const PREVIEW_MS = 2600;
+
 export function VoicePicker({
   selectedId,
   onSelect,
@@ -75,20 +130,29 @@ export function VoicePicker({
 }: {
   selectedId: string;
   onSelect: (id: string) => void;
-  /** Called after selection so the student hears the voice they picked. */
-  onPreview: (id: string) => void;
+  /**
+   * Called after selection so the student hears the voice they picked.
+   * Resolves FALSE when no clip could be played, which is what stops the bars
+   * animating over silence.
+   */
+  onPreview: (id: string) => Promise<boolean>;
   disabled?: boolean;
 }) {
   const [speaking, setSpeaking] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (!speaking) return;
+    const id = setTimeout(() => setSpeaking(null), PREVIEW_MS);
+    return () => clearTimeout(id);
+  }, [speaking]);
+
   const choose = (id: string) => {
     if (disabled) return;
     onSelect(id);
-    onPreview(id);
-    setSpeaking(id);
-    // Plain JS clock, per this codebase's convention for time-based logic —
-    // long enough to cover the preview line, then the bars settle.
-    setTimeout(() => setSpeaking((s) => (s === id ? null : s)), 2600);
+    // The equaliser starts only once the clip is genuinely playing. It used to
+    // start regardless, so a preview that silently failed to resolve still
+    // animated — the UI claiming a sound the student could not hear.
+    void onPreview(id).then((played) => setSpeaking(played ? id : null));
   };
 
   return (
@@ -109,7 +173,7 @@ export function VoicePicker({
             <View style={{ flex: 1 }}>
               <View style={styles.nameRow}>
                 <Text style={[styles.name, selected && styles.nameSelected]}>{v.name}</Text>
-                {speaking === v.id && <SpeakingBars active />}
+                <SpeakingBars active={speaking === v.id} />
               </View>
               <Text style={styles.tagline}>{v.tagline}</Text>
             </View>
@@ -150,7 +214,9 @@ const styles = StyleSheet.create({
   },
   accentOn: { backgroundColor: color.green },
 
-  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  // No `gap` here: the bars own their leading space via an animated marginLeft,
+  // so the row closes up completely when they collapse to zero width.
+  nameRow: { flexDirection: 'row', alignItems: 'center' },
   name: { fontFamily: font.semibold, fontSize: 15, color: color.ink },
   nameSelected: { color: color.green },
   tagline: { ...type.small, color: color.inkSoft, marginTop: 1 },
@@ -166,8 +232,16 @@ const styles = StyleSheet.create({
   },
   checkOn: { backgroundColor: color.green, borderColor: color.green },
 
-  bars: { flexDirection: 'row', alignItems: 'flex-end', gap: 2, height: 14 },
-  bar: { width: 2.5, borderRadius: radius.full, backgroundColor: color.greenMid },
+  bars: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: BAR_GAP,
+    height: BAR_PEAK,
+    // Clips the bars while the container collapses, so they slide away behind
+    // the edge instead of poking out of a zero-width box.
+    overflow: 'hidden',
+  },
+  bar: { width: BAR_W, borderRadius: radius.full, backgroundColor: color.greenMid },
 
   hint: { ...type.small, color: color.inkFaint, marginTop: 2 },
 });

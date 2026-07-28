@@ -47,38 +47,57 @@ function loadModules() {
   return modules;
 }
 
-/** filename -> resolved local file URI, filled by preload(). */
+/** filename -> resolved local file URI. Warmed by preload, filled lazily by resolveClip. */
 const resolved = new Map<string, string>();
 let preloaded = false;
+let audioModeSet = false;
 
 export const isVoiceSupported = (): boolean => loadModules() !== null && VOICE_PACK_INSTALLED;
 
 /**
- * Resolve every clip to a local URI before the session starts.
+ * Resolve ONE clip, caching the result.
  *
- * Done up front so the first cue is instant — a nudge that arrives two seconds
- * late is worse than no nudge. Returns the filenames that failed, which the
- * caller logs; a partial pack degrades to silence for the missing lines only.
+ * THE BUG THIS EXISTS TO KILL: every play path used to read straight out of
+ * `resolved`, a module-level Map filled only by `preloadVoicePack()` — and the
+ * only caller of that was `app/focus.tsx`. Settings never called it, so tapping
+ * a voice in the picker looked up an empty Map, got `undefined`, and returned
+ * SILENTLY. The picker animated as if it were playing and nothing came out.
+ *
+ * It appeared to fix itself at random because the Map is module state: once a
+ * focus session had run with the voice enabled, previews worked for the rest of
+ * that JS context, and went quiet again after a reload. Nothing is allowed to
+ * depend on another screen having warmed a cache first — resolution is now
+ * lazy and self-sufficient, and preload is purely an optimisation.
  */
-export async function preloadVoicePack(): Promise<string[]> {
+async function resolveClip(file: string): Promise<string | null> {
+  const cached = resolved.get(file);
+  if (cached) return cached;
+
   const m = loadModules();
-  if (!m || !VOICE_PACK_INSTALLED) return Object.keys(VOICE_ASSETS);
-  if (preloaded) return [];
+  if (!m || !VOICE_PACK_INSTALLED) return null;
+  const moduleId = (VOICE_ASSETS as Record<string, number>)[file];
+  if (moduleId === undefined) return null;
 
-  const failures: string[] = [];
-  await Promise.all(
-    Object.entries(VOICE_ASSETS).map(async ([file, moduleId]) => {
-      try {
-        const [asset] = await m.Asset.loadAsync(moduleId);
-        const uri = asset?.localUri ?? asset?.uri;
-        if (uri) resolved.set(file, uri);
-        else failures.push(file);
-      } catch {
-        failures.push(file);
-      }
-    }),
-  );
+  try {
+    const [asset] = await m.Asset.loadAsync(moduleId);
+    const uri = asset?.localUri ?? asset?.uri;
+    if (!uri) return null;
+    resolved.set(file, uri);
+    return uri;
+  } catch {
+    return null;
+  }
+}
 
+/**
+ * Configure the audio session once. Idempotent, and called from every entry
+ * point — it used to live inside `preloadVoicePack`, so a screen that never
+ * preloaded also never set the mode.
+ */
+async function ensureAudioMode(): Promise<void> {
+  if (audioModeSet) return;
+  const m = loadModules();
+  if (!m) return;
   try {
     // Duck other audio rather than stopping it: students commonly study to
     // recitation or music, and killing it to say six words would be rude.
@@ -88,9 +107,31 @@ export async function preloadVoicePack(): Promise<string[]> {
       interruptionMode: 'duckOthers',
       shouldPlayInBackground: false,
     });
+    audioModeSet = true;
   } catch {
     // Non-fatal: audio still plays, it just may not duck politely.
   }
+}
+
+/**
+ * Resolve every clip up front so the first cue is instant — a nudge that
+ * arrives two seconds late is worse than no nudge.
+ *
+ * Purely an optimisation now: `resolveClip` will fetch anything this missed.
+ * Returns the filenames that failed, which the caller logs.
+ */
+export async function preloadVoicePack(): Promise<string[]> {
+  const m = loadModules();
+  if (!m || !VOICE_PACK_INSTALLED) return Object.keys(VOICE_ASSETS);
+  await ensureAudioMode();
+  if (preloaded) return [];
+
+  const failures: string[] = [];
+  await Promise.all(
+    Object.keys(VOICE_ASSETS).map(async (file) => {
+      if (!(await resolveClip(file))) failures.push(file);
+    }),
+  );
 
   preloaded = true;
   return failures;
@@ -163,6 +204,10 @@ const CHIME_LEAD_MS = 420;
  * gives the student a fraction of a second to orient before words start.
  */
 export function playCue(cue: VoiceCue, voiceId: string = DEFAULT_VOICE_ID): void {
+  void playCueAsync(cue, voiceId);
+}
+
+async function playCueAsync(cue: VoiceCue, voiceId: string): Promise<void> {
   if (!isVoiceSupported()) return;
 
   const variants = VOICE_LINES[cue.id];
@@ -172,7 +217,10 @@ export function playCue(cue: VoiceCue, voiceId: string = DEFAULT_VOICE_ID): void
   // An unknown id (a restored backup from a build with a different voice list)
   // falls back rather than going silent.
   const voice = isKnownVoice(voiceId) ? voiceId : DEFAULT_VOICE_ID;
-  const lineUri = resolved.get(clipFile(voice, variant.file));
+  await ensureAudioMode();
+  // Resolved on demand rather than read out of the preload cache, so a cue can
+  // never be silently dropped because one clip missed the preload.
+  const lineUri = await resolveClip(clipFile(voice, variant.file));
   if (!lineUri) return; // missing clip -> silence, never a crash
 
   // Anything still speaking is cut off first. Interrupting beats overlapping:
@@ -180,7 +228,7 @@ export function playCue(cue: VoiceCue, voiceId: string = DEFAULT_VOICE_ID): void
   // unintelligible rather than merely untidy.
   stopSpeaking();
 
-  const chimeUri = resolved.get(CHIME_FILE);
+  const chimeUri = await resolveClip(CHIME_FILE);
   if (chimeUri) {
     // The chime is held only until the line starts, so it cannot bleed under it.
     playFile(chimeUri, CHIME_LEAD_MS + 200);
@@ -210,9 +258,18 @@ export function playCue(cue: VoiceCue, voiceId: string = DEFAULT_VOICE_ID): void
  * bundled this is instant and works with no signal — you can audition all five
  * voices during load-shedding.
  */
-export function previewVoice(voiceId: string): void {
-  if (!isVoiceSupported()) return;
+export async function previewVoice(voiceId: string): Promise<boolean> {
+  if (!isVoiceSupported()) return false;
   const voice = isKnownVoice(voiceId) ? voiceId : DEFAULT_VOICE_ID;
-  const uri = resolved.get(clipFile(voice, PREVIEW_BASE_FILE));
-  if (uri) playFile(uri);
+
+  await ensureAudioMode();
+  const uri = await resolveClip(clipFile(voice, PREVIEW_BASE_FILE));
+  if (!uri) return false;
+
+  // Same one-at-a-time rule as `playCue`. Tapping down the list used to stack
+  // every voice on top of the last; now each tap replaces the one before it,
+  // which is also what makes comparing voices actually possible.
+  stopSpeaking();
+  playFile(uri);
+  return true;
 }

@@ -22,6 +22,8 @@ export function stopSpeaking(): void {
   /* nothing is playing on this platform */
 }
 
-export function previewVoice(_voiceId: string): void {
-  /* no audio on this platform */
+/** Returns whether a clip actually played, so the picker never animates in silence. */
+export async function previewVoice(_voiceId: string): Promise<boolean> {
+  return false;
 }
+
