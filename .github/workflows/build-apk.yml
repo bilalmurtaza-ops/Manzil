@@ -6,7 +6,19 @@
 #
 # Use this for day-to-day testing (download the artifact, sideload on your phone).
 # On the final day, run a normal cloud `eas build --profile preview` instead, to get
-# the hosted QR install page for judges.
+# the hosted QR install page for judges. (The free plan includes 15 Android cloud
+# builds/month and `--local` builds do not consume them, so that quota is untouched.)
+#
+# ── SIZING NOTE, read before adding another native package ────────────────────
+# This repo is PRIVATE, so the runner is 2 vCPU / 8 GB RAM with ~21-29 GB free on /.
+# Every C++ dependency is compiled from source ONCE PER ABI, and app.json builds all
+# four (arm64-v8a, armeabi-v7a, x86, x86_64). Adding vision-camera + face-detector +
+# nitro-modules + nitro-image on 2026-07-28 took the build from a healthy 41 min to
+# failing twice: first an OOM-killed compiler (surfaces as "Could not read standard
+# output of command ninja"), then "No space left on device". The steps below buy back
+# both headroom margins — they are not incidental hygiene, they are what makes this
+# build fit. If a future package pushes it over again, the next lever is cutting
+# reactNativeArchitectures down to arm64-v8a via expo-build-properties `buildArchs`.
 #
 # ONE-TIME SETUP (things only you can do, in the GitHub web UI):
 #   1. Push this repo to GitHub (with all current code + package-lock.json committed).
@@ -30,10 +42,103 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    # Hard cap: if ninja hangs (pipe deadlock with react-native-worklets C++ build)
-    # the job fails loudly in 60 min instead of silently burning the 6-hour GH limit.
-    timeout-minutes: 60
+    # A cold 4-ABI build measured 41 min before the Focus Guard native packages and
+    # is expected around 75-100 min after them. 60 min would now kill a build that
+    # was going to succeed; 150 min still fails loudly instead of silently burning
+    # the 6-hour GitHub limit the way the 3h20m ninja hang did.
+    timeout-minutes: 150
+
     steps:
+      # ── Make the build fit ──────────────────────────────────────────────────
+      # Runs FIRST, before setup-node/setup-java, so nothing we delete is something
+      # a later step already installed. Two independent jobs:
+      #
+      #   DISK  — the runner image ships ~20-25 GB of toolchains this build never
+      #           touches (Haskell, CodeQL, .NET, Swift, PowerShell, Chrome, docker
+      #           images). Deleting them roughly doubles free space on /, which is
+      #           where both the checkout and the EAS working dir in /tmp live.
+      #           Every native module gets its own .cxx/RelWithDebInfo/<abi>/ tree,
+      #           so disk scales with (modules x 4 ABIs) — that product is what
+      #           overflowed on 2026-07-28.
+      #
+      #   RAM   — 8 GB has to cover the Gradle JVM, Metro, and several concurrent
+      #           clang++ processes. When the kernel OOM-kills a compiler, ninja's
+      #           stdout pipe closes and Gradle reports "Could not read standard
+      #           output of command ninja" — which looks like a deadlock but is
+      #           starvation. A large swapfile turns that kill into a slow compile.
+      #           /mnt is a separate disk, so this costs nothing on /.
+      #
+      # Every deletion is `|| true`: a path that moves in a future runner image must
+      # never fail the build. NOTHING here touches /usr/local/lib/android/sdk (the
+      # SDK + NDK the build needs) or the node/Java tool caches.
+      - name: Reclaim disk, add swap, size the JVM
+        run: |
+          echo "── runner: $(nproc) CPUs, $(free -m | awk '/^Mem:/{print $2}') MB RAM ──"
+          echo "── before ──"
+          df -h / /mnt
+          free -h
+
+          for path in \
+            /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL \
+            /opt/hostedtoolcache/Ruby \
+            /opt/hostedtoolcache/PyPy \
+            /opt/hostedtoolcache/go \
+            /usr/share/dotnet \
+            /usr/share/swift \
+            /usr/share/miniconda \
+            /usr/local/share/powershell \
+            /usr/local/share/chromium \
+            /opt/google/chrome \
+            /opt/az ; do
+            sudo rm -rf "$path" || true
+          done
+          docker image prune --all --force || true
+          sudo apt-get clean || true
+
+          # Swap: replace the runner's stock 4 GB /mnt swapfile with the largest one
+          # /mnt can hold, keeping 1 GB spare. Sized from actual free space rather
+          # than hardcoded, so a smaller temp disk degrades instead of failing.
+          sudo swapoff -a || true
+          sudo rm -f /mnt/swapfile /swapfile || true
+          avail=$(df --output=avail -BG /mnt | tail -1 | tr -dc '0-9')
+          size=$(( avail > 13 ? 12 : avail - 1 ))
+          if [ "$size" -ge 4 ]; then
+            sudo fallocate -l "${size}G" /mnt/swapfile
+            sudo chmod 600 /mnt/swapfile
+            sudo mkswap /mnt/swapfile
+            sudo swapon /mnt/swapfile
+            echo "swap: ${size}G on /mnt"
+          else
+            echo "swap: skipped, only ${avail}G free on /mnt"
+          fi
+
+          # ── Size the Gradle JVM to the runner we actually got ─────────────────
+          # A PRIVATE repo gets 2 vCPU / 8 GB; a PUBLIC one gets 4 vCPU / 16 GB. This
+          # repo has been both, so deriving the numbers beats hardcoding a guess that
+          # is wrong half the time — too many workers on a small runner is exactly the
+          # OOM that killed ninja on 2026-07-28, and too few on a big one wastes the
+          # upgrade. Exported via GITHUB_ENV so the build step inherits it; do not
+          # re-declare GRADLE_OPTS in that step's `env:` or it will win over this.
+          #
+          # workers.max = CPU count: the native build is CPU-bound.
+          # Heap = 3/8 of RAM: the 2026-07-27 log shows Metaspace, not heap, is what
+          #   actually ran out, so the JVM gets the smaller share and the concurrent
+          #   clang++ processes keep the rest. Clamped to a sane 2-6 GB either way.
+          # MaxMetaspaceSize=1g: the limit that did bind. Each autolinked RN module
+          #   adds classloaders, and this project has a lot of them.
+          CPUS=$(nproc)
+          MEM_MB=$(free -m | awk '/^Mem:/{print $2}')
+          HEAP_MB=$(( MEM_MB * 3 / 8 ))
+          if [ "$HEAP_MB" -lt 2048 ]; then HEAP_MB=2048; fi
+          if [ "$HEAP_MB" -gt 6144 ]; then HEAP_MB=6144; fi
+          echo "GRADLE_OPTS=-Dorg.gradle.daemon=false -Dorg.gradle.workers.max=${CPUS} -Xmx${HEAP_MB}m -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" >> "$GITHUB_ENV"
+          echo "gradle: ${CPUS} workers, ${HEAP_MB}m heap"
+
+          echo "── after ──"
+          df -h / /mnt
+          free -h
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -54,6 +159,14 @@ jobs:
       # re-bundles our source with Metro and recompiles from scratch, so our bug
       # fixes are ALWAYS fully applied; this only skips re-downloading unchanged
       # dependencies. Keyed on package-lock.json, so any dependency change refetches.
+      #
+      # Do NOT add ~/.gradle/caches/build-cache-1 here. That was tried on 2026-07-28
+      # to "cache the CMake/ninja outputs" and cannot work: AGP's externalNativeBuild
+      # tasks are not Gradle-cacheable, so the C++ work is invisible to the build
+      # cache. It measured a 0-second restore, never wrote a cache entry, and would
+      # have restored GB onto the disk that had just overflowed while evicting this
+      # (genuinely useful, ~850 MB, ~11 s) one against the repo's 10 GB cache limit.
+      # The right tool for skipping C++ recompilation is ccache, not the build cache.
       - name: Cache Gradle dependencies (downloads only)
         uses: actions/cache@v4
         with:
@@ -64,22 +177,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-deps-
 
-      # Cache the CMake/ninja intermediate outputs for react-native-worklets and
-      # react-native-reanimated. These are the C++ libraries that cause the ninja
-      # pipe-deadlock on the first cold build. Caching the .cxx directory means
-      # subsequent runs skip the expensive cmake configure + ninja compile phases
-      # entirely, dramatically reducing build time and eliminating the hang window.
-      # Keyed on package-lock.json so any package version change busts the cache.
-      - name: Cache CMake/ninja C++ build outputs
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches/transforms-3
-            ~/.gradle/caches/build-cache-1
-          key: ${{ runner.os }}-gradle-build-${{ hashFiles('package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-build-
-
       - name: Install dependencies
         run: npm ci # respects .npmrc (legacy-peer-deps=true)
 
@@ -87,21 +184,19 @@ jobs:
         run: npx eas-cli build --platform android --profile preview --local --non-interactive --output ${{ github.workspace }}/manzil.apk
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-          # ── Gradle JVM / daemon settings ──────────────────────────────────────
-          # --no-daemon: prevents the Gradle daemon from holding the pipe open
-          #   after a ninja subprocess write fills the OS pipe buffer — the
-          #   root cause of the "Could not read standard output of ninja" hang.
-          # workers.max=2: matches the GH runner's 2 vCPUs; prevents memory
-          #   exhaustion from over-parallelising native C++ compilation.
-          # -Xmx4g: gives the JVM enough heap to drain ninja's stdout pipe
-          #   without blocking; default 512m is too small for the worklets build.
-          # -Dfile.encoding=UTF-8: avoids rare charset errors in ninja log output.
-          GRADLE_OPTS: >-
-            -Dorg.gradle.daemon=false
-            -Dorg.gradle.workers.max=2
-            -Xmx4g
-            -XX:MaxMetaspaceSize=512m
-            -Dfile.encoding=UTF-8
+          # GRADLE_OPTS is deliberately NOT set here — the first step derives it from
+          # the runner's real CPU/RAM and exports it via GITHUB_ENV. Declaring it here
+          # would silently override that and reintroduce the hardcoded guess.
+
+      # Runs even when the build fails — the absence of this is why the 2026-07-28
+      # failures had to be diagnosed by inference. Headroom left here is the margin
+      # available for the next native package; if it is thin, cut the ABI list.
+      - name: Report disk and memory
+        if: always()
+        run: |
+          df -h / /mnt
+          free -h
+          swapon --show || true
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
