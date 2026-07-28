@@ -11,6 +11,14 @@
 # Caveat: GitHub disables scheduled workflows on repositories with no commits for
 # 60 days. workflow_dispatch is kept so it can be re-enabled by hand from the
 # Actions tab.
+#
+# Caveat 2, learned the hard way on 2026-07-28: a repository created by GitHub's
+# IMPORT tool has its commits written without a push event, so Actions never
+# registers the workflow files even though they are plainly there on the default
+# branch and Actions is enabled. The Actions tab just shows nothing. Registration
+# only happens on a push that MODIFIES the workflow file — touching one file does
+# not register its neighbours. If this workflow ever goes missing after a repo
+# move, that is why: make a commit that changes this file.
 name: Keep Supabase project awake
 
 on:
