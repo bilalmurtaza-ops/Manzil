@@ -451,56 +451,90 @@ export function FocusCameraView({ status }: { status: FocusGuardStatus }) {
   };
 
   const device = native?.useCameraDevice?.('front');
-  const output = native?.useFaceDetectorOutput?.({
-    performanceMode: 'fast',
-    runClassifications: true, // eye-open probability
-    runLandmarks: false,
-    runContours: false,
-    trackingEnabled: true, // trackingId, so one person can be followed
-    /**
-     * Smallest face width ML Kit will look for, as a fraction of frame width.
-     * A NATIVE SEARCH HINT, not a hard cutoff: per Google's own docs
-     * (developers.google.com/ml-kit/vision/face-detection), `setMinFaceSize()`
-     * "is not a hard limit" and "can not be used to filter out face sizes" —
-     * the detector "may find faces slightly smaller than specified." What it
-     * DOES reliably do is bias the detector toward faces at or above this
-     * size, so a face well below it becomes markedly less likely to ever
-     * reach `onFacesDetected` at all, without a documented guarantee either
-     * way at the margin.
-     *
-     * Was 0.15 (this wrapper library's own out-of-the-box default, stricter
-     * than ML Kit's native 0.1 default — nobody had tuned it for this app).
-     * Reported bug: calibration refused with "I couldn't find your face" for a
-     * clearly visible, well-lit face — the exact message `no-face` produces.
-     * Likely cause: propping the phone at a normal reading distance (this
-     * app's own documented use case, per `calibration.ts`'s "prop your phone"
-     * copy) commonly puts a face below 15% of frame width, well into the
-     * range this hint biases the detector away from.
-     *
-     * `calibrate()` already has its OWN, more informative distance check —
-     * `config.minFaceArea` (1% of frame area) — which exists specifically to
-     * tell a far-but-visible student "move closer" instead of the unhelpful
-     * "no face found". That check can only ever fire on a face ML Kit reports
-     * at all. 0.15 width corresponds to ~2.25% area — a stronger bias against
-     * detection than the 1% JS threshold requires — so in practice the JS
-     * "too-far" branch was rarely if ever reached on a real device; students
-     * past a certain distance likely got the wrong, less actionable message
-     * regardless of lighting.
-     *
-     * 0.08 restores the intended split, and is directionally sound even
-     * without a hard vendor guarantee: for any face box at least as tall as
-     * it is wide (true of every face detector), area >= width^2, so
-     * width <= sqrt(area). For minFaceArea = 0.01 that bound is exactly 0.1 —
-     * 0.08 sits under it with margin, so a face whose reported area reaches
-     * the 1% JS threshold was very unlikely to have been the one this native
-     * hint biased away. If `config.minFaceArea` in `types.ts` ever changes,
-     * this value should stay below sqrt(minFaceArea) to preserve that margin.
-     */
-    minFaceSize: 0.08,
-    cameraFacing: 'front',
-    onFacesDetected: s.__onFacesDetected,
-    onError: s.__onError,
-  });
+
+  /**
+   * Recreated only when the callbacks the detector reports into actually
+   * change — everything else here is a static literal. `useFaceDetectorOutput`
+   * used to receive a brand-new object every render; whether the native module
+   * treats that as "reinitialize the detector" isn't provable from JS, but
+   * memoizing removes a plausible source of detector churn on every
+   * state-transition re-render for free, so there is no reason not to.
+   */
+  const detectorOptions = useMemo(
+    () => ({
+      /**
+       * FAST was the library's own out-of-the-box default, carried over
+       * unexamined since this feature's very first commit — never tuned or
+       * even discussed. Per Google's own docs (FaceDetectorOptions.
+       * PerformanceMode), FAST "prioritizes speed but may detect fewer
+       * faces" i.e. a materially higher per-frame false-negative rate; ACCURATE
+       * "will tend to detect more faces and may be more precise... at the cost
+       * of speed." Google recommends FAST specifically for latency-sensitive
+       * real-time use (AR overlays, live viewfinders) — Focus Guard is not
+       * that: `onFacesDetected` already throttles to one accepted sample per
+       * 300ms (`SAMPLE_INTERVAL_MS`), and every state transition needs
+       * multi-second dwell time (`stateMachine.ts`). ACCURATE's extra
+       * per-frame latency is fully absorbed by an architecture already built
+       * to not care about sub-300ms responsiveness, so FAST's one real
+       * advantage doesn't apply here — while its higher miss rate plausibly
+       * explains reported "refuses to find my face" calibration failures:
+       * `calibrate()` requires ~half of a 5-second window's samples to carry
+       * a detected face (`MIN_VALID_SAMPLES` in `calibration.ts`), a bar a
+       * meaningfully lossy per-frame detector can occasionally miss on an
+       * unlucky window even with a genuinely visible, well-lit face.
+       */
+      performanceMode: 'accurate' as const,
+      runClassifications: true, // eye-open probability
+      runLandmarks: false,
+      runContours: false,
+      trackingEnabled: true, // trackingId, so one person can be followed
+      /**
+       * Smallest face width ML Kit will look for, as a fraction of frame width.
+       * A NATIVE SEARCH HINT, not a hard cutoff: per Google's own docs
+       * (developers.google.com/ml-kit/vision/face-detection), `setMinFaceSize()`
+       * "is not a hard limit" and "can not be used to filter out face sizes" —
+       * the detector "may find faces slightly smaller than specified." What it
+       * DOES reliably do is bias the detector toward faces at or above this
+       * size, so a face well below it becomes markedly less likely to ever
+       * reach `onFacesDetected` at all, without a documented guarantee either
+       * way at the margin.
+       *
+       * Was 0.15 (this wrapper library's own out-of-the-box default, stricter
+       * than ML Kit's native 0.1 default — nobody had tuned it for this app).
+       * Reported bug: calibration refused with "I couldn't find your face" for a
+       * clearly visible, well-lit face — the exact message `no-face` produces.
+       * Likely cause: propping the phone at a normal reading distance (this
+       * app's own documented use case, per `calibration.ts`'s "prop your phone"
+       * copy) commonly puts a face below 15% of frame width, well into the
+       * range this hint biases the detector away from.
+       *
+       * `calibrate()` already has its OWN, more informative distance check —
+       * `config.minFaceArea` (1% of frame area) — which exists specifically to
+       * tell a far-but-visible student "move closer" instead of the unhelpful
+       * "no face found". That check can only ever fire on a face ML Kit reports
+       * at all. 0.15 width corresponds to ~2.25% area — a stronger bias against
+       * detection than the 1% JS threshold requires — so in practice the JS
+       * "too-far" branch was rarely if ever reached on a real device; students
+       * past a certain distance likely got the wrong, less actionable message
+       * regardless of lighting.
+       *
+       * 0.08 restores the intended split, and is directionally sound even
+       * without a hard vendor guarantee: for any face box at least as tall as
+       * it is wide (true of every face detector), area >= width^2, so
+       * width <= sqrt(area). For minFaceArea = 0.01 that bound is exactly 0.1 —
+       * 0.08 sits under it with margin, so a face whose reported area reaches
+       * the 1% JS threshold was very unlikely to have been the one this native
+       * hint biased away. If `config.minFaceArea` in `types.ts` ever changes,
+       * this value should stay below sqrt(minFaceArea) to preserve that margin.
+       */
+      minFaceSize: 0.08,
+      cameraFacing: 'front' as const,
+      onFacesDetected: s.__onFacesDetected,
+      onError: s.__onError,
+    }),
+    [s.__onFacesDetected, s.__onError],
+  );
+  const output = native?.useFaceDetectorOutput?.(detectorOptions);
 
   if (!native || !device || !s.__active) return null;
   const Camera = native.Camera;
