@@ -193,6 +193,46 @@ for (const [runway, dm] of [[12, 420], [30, 420], [225, 420], [90, 360]] as [num
   );
 }
 
+// 5b-sweep. The 4 spot checks above missed a real violation (class 10
+// science-bio @120m, exam 30 days out: a run of 3 on day 4) because once one
+// subject's queue emptied for the day, the score-decay preference alone (no
+// hard cap) let the remaining dominant subject keep winning. Sweep every
+// combo x daily-time x runway so this class of bug can't hide in an unsampled
+// corner again.
+{
+  let swept = 0;
+  let worstOverall = 0;
+  let worstOverallLabel = '';
+  for (const [cls, grp] of COMBOS) {
+    for (const dm of TIME_OPTIONS) {
+      for (const runway of [14, 30, 60, 90, 225]) {
+        swept++;
+        const plan = generatePlan(mkProfile(cls, grp, dm, runway));
+        const perDay = new Map<string, string[]>();
+        for (const s of plan.sessions) {
+          if (s.kind === 'practice') continue;
+          perDay.set(s.date, [...(perDay.get(s.date) ?? []), s.subjectId]);
+        }
+        let worstRun = 0;
+        let worstDay = '';
+        for (const [date, subs] of perDay) {
+          let run = 1;
+          for (let i = 1; i < subs.length; i++) {
+            run = subs[i] === subs[i - 1] ? run + 1 : 1;
+            if (run > worstRun) { worstRun = run; worstDay = date; }
+          }
+        }
+        if (worstRun > worstOverall) {
+          worstOverall = worstRun;
+          worstOverallLabel = `${cls}/${grp} @${dm}m runway ${runway}d on ${worstDay}`;
+        }
+      }
+    }
+  }
+  console.log(`  info: swept ${swept} combo x daily-time x runway plans, worst run = ${worstOverall}${worstOverall > 0 ? ` (${worstOverallLabel})` : ''}`);
+  check('variety sweep: no same-subject run exceeds 2 in any swept plan', worstOverall <= 2, `worst was ${worstOverall} at ${worstOverallLabel}`);
+}
+
 // ---------------------------------------------------------------- 6. coverage
 console.log('\n=== 6. Every examined chapter still gets a first pass ===');
 for (const [cls, grp] of COMBOS) {
@@ -282,6 +322,34 @@ for (const [cls, grp] of COMBOS) {
       readiness.subjects.length === subjectsForProfile(cls, grp).length
         && Number.isFinite(readiness.overall)
         && readiness.subjects.every((subject) => Number.isFinite(subject.score)),
+    );
+  }
+}
+
+// ------------------------------------------------- 10b. risk chapters coverage
+// Found 2026-07-29: `riskChapters` filtered on a flat `weight >= 4`, but Urdu and
+// Tarjuma-tul-Quran (compulsory for every student, both classes) never have a
+// single chapter at weight 4 or 5 -- their pairing schemes spread marks over
+// more chapters instead of concentrating them. That meant "Exam-day risk" could
+// structurally never include either subject, no matter how neglected. Confirm
+// every subject remains ELIGIBLE to appear when it's the one being ignored.
+console.log('\n=== 10b. Every subject can surface as a risk chapter when neglected ===');
+for (const [cls, grp] of COMBOS) {
+  const profile = mkProfile(cls, grp, 240, 200);
+  const plan = generatePlan(profile);
+  for (const subject of subjectsForProfile(cls, grp)) {
+    // Finish every OTHER subject's sessions; leave this one untouched.
+    const patched = {
+      ...plan,
+      sessions: plan.sessions.map((s) =>
+        s.subjectId === subject.id ? s : { ...s, done: true, doneAt: new Date().toISOString() },
+      ),
+    };
+    const readiness = computeReadiness(profile, patched, []);
+    const present = readiness.riskChapters.some((c) => c.subject.id === subject.id);
+    check(
+      `${cls}/${grp}: ${subject.id} can appear in riskChapters when it's the only one neglected`,
+      present,
     );
   }
 }

@@ -24,6 +24,16 @@ type Reason = 'idle' | 'background' | 'foreground-retry' | 'manual' | 'armed';
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let inFlight: Promise<void> | null = null;
+/**
+ * Whether *any* caller currently awaiting `inFlight` needs its failure
+ * rethrown. Set from the closure-captured `manual` flag of whichever call
+ * started the upload, but ALSO updated by a manual call that joins an
+ * already-running non-manual upload — otherwise a "Back up now" tap that
+ * happens to land while an idle/background auto-attempt is mid-flight would
+ * silently swallow that attempt's failure (it only rethrows for its
+ * originator) and the manual caller would see a false success.
+ */
+let inFlightWantsThrow = false;
 let lastAttemptAt = 0;
 let unsubscribeStore: (() => void) | null = null;
 let appStateSub: { remove: () => void } | null = null;
@@ -82,9 +92,17 @@ function canAutoAttempt(reason: Reason): boolean {
  * rather than racing two writes at the same `rev`.
  */
 export function requestBackup(reason: Reason): Promise<void> {
-  if (inFlight) return inFlight;
-
   const manual = reason === 'manual';
+  if (inFlight) {
+    // Joining an existing upload rather than racing a second write is correct —
+    // but if THIS caller is manual, its failure must still surface even though
+    // it didn't start the request. Safe to set after the fact: `inFlight` is
+    // only cleared in the `finally` below, which runs strictly after the catch
+    // that reads this flag, so a manual joiner can never miss the check.
+    if (manual) inFlightWantsThrow = true;
+    return inFlight;
+  }
+
   if (!manual && !canAutoAttempt(reason)) return Promise.resolve();
   if (manual && (!isCloudConfigured() || !useCloudStore.getState().session)) {
     return Promise.resolve();
@@ -99,6 +117,7 @@ export function requestBackup(reason: Reason): Promise<void> {
 
   const state = currentBackupState();
   const fp = fingerprint(state);
+  inFlightWantsThrow = manual;
 
   inFlight = (async () => {
     try {
@@ -115,11 +134,13 @@ export function requestBackup(reason: Reason): Promise<void> {
         at: new Date().toISOString(),
       });
       if (__DEV__) console.log(`[cloud] upload failed (${err.kind}): ${err.message}`);
-      // Manual callers surface the error themselves; automatic ones stay silent
-      // and let the Settings status line carry it.
-      if (manual) throw err;
+      // Manual callers (the original one, or one that joined mid-flight above)
+      // surface the error themselves; purely automatic attempts stay silent and
+      // let the Settings status line carry it.
+      if (inFlightWantsThrow) throw err;
     } finally {
       inFlight = null;
+      inFlightWantsThrow = false;
     }
   })();
 

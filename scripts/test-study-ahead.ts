@@ -12,6 +12,7 @@
 import {
   completedOn as engineCompletedOn,
   daysAheadUsedToday,
+  extendRevision,
   generatePlan,
   maintainPlan,
   MAX_DAYS_AHEAD,
@@ -340,6 +341,53 @@ console.log('='.repeat(96));
   console.log(`  after finishing today: today pending=${todayAfter}, tomorrow=${tomorrowBefore}->${tomorrowAfter}`);
   check('finishing today does not drag tomorrow forward', todayAfter === 0);
   check("tomorrow's plan is left intact", tomorrowAfter === tomorrowBefore);
+}
+
+console.log('\n' + '='.repeat(96));
+console.log('EXTEND-REVISION REST — a dry non-practice queue must not force-feed today');
+console.log('='.repeat(96));
+{
+  // Found 2026-07-29: a dedicated study-ahead student can, over many real days,
+  // exhaust every pending non-practice (study/revise) session before the
+  // calendar reaches the practice phase. `extendRevision` closes that gap, but
+  // used to start filling at day 0 (today) unconditionally — so re-opening the
+  // app *after* finishing today handed the student a brand-new batch of
+  // revision dated today, directly contradicting the rest rule `maintainPlan`
+  // otherwise enforces via `planNeedsReflow`'s case 4.
+  const profile = mkProfile('10', 'science-bio', 240, 200);
+  const today = todayISO();
+
+  const doneToday: PlanSession = {
+    id: 'done-today', date: today, subjectId: 'math', chapterId: 'm10-1',
+    kind: 'study', minutes: 60, done: true, doneAt: new Date().toISOString(),
+  };
+  const futurePractice: PlanSession = {
+    id: 'future-practice', date: addDays(today, 50), subjectId: 'math', chapterId: 'm10-1',
+    kind: 'practice', minutes: 45, done: false,
+  };
+  const restPlan: StudyPlan = {
+    generatedAt: new Date().toISOString(), examDate: profile.examDate,
+    sessions: [doneToday, futurePractice],
+  };
+  const restResult = extendRevision(restPlan, profile, today);
+  const restToday = restResult.sessions.filter((s) => !s.done && s.date === today).length;
+  check('rest case: nothing already pending + something done today -> no new work lands on today',
+    restToday === 0, `got ${restToday} new sessions on today`);
+
+  // The complementary path must keep working: a genuine hole with nothing done
+  // yet still fills from today, or a student could hit an idle day.
+  const doneYesterday: PlanSession = {
+    id: 'done-yesterday', date: addDays(today, -1), subjectId: 'math', chapterId: 'm10-2',
+    kind: 'study', minutes: 60, done: true, doneAt: new Date(Date.now() - 86_400_000).toISOString(),
+  };
+  const holePlan: StudyPlan = {
+    generatedAt: new Date().toISOString(), examDate: profile.examDate,
+    sessions: [doneYesterday, futurePractice],
+  };
+  const holeResult = extendRevision(holePlan, profile, today);
+  const holeToday = holeResult.sessions.filter((s) => !s.done && s.date === today).length;
+  check('genuine hole: nothing done today -> still fills from today, no idle day',
+    holeToday > 0, `got ${holeToday} sessions on today`);
 }
 
 console.log('\n' + '='.repeat(96));

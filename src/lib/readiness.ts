@@ -81,10 +81,31 @@ export function computeReadiness(
 
   const [gradeBand, gradeNote] = gradeFor(overall);
 
+  // Global weight>=4 candidates, with a per-subject fallback to that subject's
+  // own heaviest chapters — mirrors planEngine's `drillable()` cascade. Urdu and
+  // Tarjuma-tul-Quran (compulsory for every student, both class levels) never
+  // have a single chapter at weight>=4: their pairing schemes spread marks over
+  // more chapters instead of concentrating them, so a flat global cutoff meant
+  // those two subjects could never appear here at all, no matter how neglected.
+  const RISK_WEIGHT_FLOOR = 4;
   const riskChapters = subjectResults
-    .flatMap((s) => s.chapters)
-    .filter((c) => c.weight >= 4)
-    .sort((a, b) => a.score * a.weight - b.score * b.weight || b.weight - a.weight)
+    .flatMap((s) => {
+      const heavy = s.chapters.filter((c) => c.weight >= RISK_WEIGHT_FLOOR);
+      if (heavy.length > 0) return heavy;
+      const maxWeight = Math.max(0, ...s.chapters.map((c) => c.weight));
+      return maxWeight > 0 ? s.chapters.filter((c) => c.weight === maxWeight) : [];
+    })
+    // Rank by MARKS AT RISK — (1 - score) x weight, descending — not by marks
+    // already secured. The old key (`score * weight` ascending) was masked by
+    // the `weight >= 4` filter above: once the per-subject fallback let weight-3
+    // subjects into the pool, that key handed them the whole list, because a
+    // low-weight chapter can never accumulate much *secured* value and so always
+    // sorted first. Measured on an evenly-progressing 10/arts student: the top 6
+    // became 0/6 heavy chapters, hiding General Maths, English, General Science
+    // and Pak Studies behind six Tarjuma entries. Ranking by exposure instead
+    // restores 5-6/6 heavy chapters while still letting Urdu or Tarjuma surface
+    // when they genuinely are the most exposed.
+    .sort((a, b) => (1 - b.score) * b.weight - (1 - a.score) * a.weight || b.weight - a.weight)
     .slice(0, 6);
 
   return { overall, gradeBand, gradeNote, subjects: subjectResults, riskChapters };

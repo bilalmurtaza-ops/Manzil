@@ -146,6 +146,16 @@ function fillDays(
     let left = dailyLoad;
     /** How many blocks each subject already has today — drives variety. */
     const usedCount = new Map<string, number>();
+    /**
+     * Consecutive-pick streak for the hard "no more than 2 in a row" cap below.
+     * The score decay alone (see `score` in the loop) only discourages repeats —
+     * it doesn't forbid them, so once every other subject's queue empties for
+     * the day a single dominant subject could keep winning by default. Measured:
+     * class 10 science-bio @120m/day with the exam 30 days out produced a run of
+     * 3 same-subject blocks on day 4 before this cap existed.
+     */
+    let streakSubjectId: string | null = null;
+    let streakCount = 0;
     // A long day must spread over more subjects. The flat cap of 3 was tuned when
     // every day was ~90 minutes; at 240 min/day it forced 8+ consecutive blocks of
     // the same subject once the three slots were taken.
@@ -154,15 +164,19 @@ function fillDays(
       Math.min(queues.size, Math.ceil(dailyLoad / 45)),
     );
 
-    while (left >= SESSION_MIN) {
-      // Subject with the most remaining work; prefer subjects not studied today.
-      // Candidates are ranked, but a block is only placed if it can be placed
-      // CLEANLY — either whole, or split so that both halves are still a real
-      // session. Preferring a subject whose head block fits outright keeps days
-      // full without ever overflowing the budget or emitting a 5-minute stub.
+    // Subject with the most remaining work; prefer subjects not studied today.
+    // Candidates are ranked, but a block is only placed if it can be placed
+    // CLEANLY — either whole, or split so that both halves are still a real
+    // session. Preferring a subject whose head block fits outright keeps days
+    // full without ever overflowing the budget or emitting a 5-minute stub.
+    // `capStreak`: when true, a subject already at its 2-consecutive limit is
+    // excluded; called once optimistically, then again without the cap only if
+    // that exclusion was the sole reason nothing was found (see below).
+    const pickBest = (capStreak: boolean) => {
       let best: string | null = null;
       let bestScore = -1;
       let bestFits = false;
+      let excludedByStreak = false;
       for (const [subjectId, queue] of queues) {
         if (queue.length === 0) continue;
         const times = usedCount.get(subjectId) ?? 0;
@@ -174,6 +188,14 @@ function fillDays(
         // there isn't one, so skip it today and let another subject use the time —
         // otherwise the plan ends up with 8- and 10-minute stub sessions.
         if (!fits && head - left < SESSION_MIN && queue.length === 1) continue;
+        // Hard cap: never let a subject take a 3rd consecutive block today while
+        // any other subject still has eligible content — see `streakSubjectId`
+        // above. Only lifted when this is truly the sole remaining candidate, so
+        // a day never dead-ends with unfilled budget.
+        if (capStreak && subjectId === streakSubjectId && streakCount >= 2) {
+          excludedByStreak = true;
+          continue;
+        }
         const remaining = queue.reduce((a, b) => a + b.minutes, 0);
         // Diminishing preference per repeat. A flat 0.6 penalty was too weak: a
         // subject with far more remaining work still won every slot, stacking the
@@ -186,7 +208,20 @@ function fillDays(
           bestFits = fits;
         }
       }
+      return { best, excludedByStreak };
+    };
+
+    while (left >= SESSION_MIN) {
+      let { best, excludedByStreak } = pickBest(true);
+      // Every candidate was excluded solely by the streak cap — re-run allowing
+      // it, since the alternative (breaking early) would waste the day's budget.
+      if (!best && excludedByStreak) ({ best } = pickBest(false));
       if (!best) break;
+      if (best === streakSubjectId) streakCount += 1;
+      else {
+        streakSubjectId = best;
+        streakCount = 1;
+      }
 
       const queue = queues.get(best)!;
       const block = queue[0];
@@ -652,7 +687,18 @@ export function extendRevision(
     .map((s) => dayDiff(today, s.date));
   const lastWorkDay = workDays.length > 0 ? Math.max(...workDays) : -1;
 
-  const from = Math.max(0, lastWorkDay + 1);
+  let from = Math.max(0, lastWorkDay + 1);
+  // A gap starting exactly today, with nothing else pending today, only ever
+  // opens this way when `lastWorkDay` is -1 — the whole non-practice queue ran
+  // dry (a diligent study-ahead student outpacing the calendar). If they also
+  // already completed something today, this is the same "let them rest" moment
+  // `planNeedsReflow` protects: without this guard, reopening the app later the
+  // same day would hand them a fresh batch of revision they never asked for,
+  // right after they finished. Start the new content tomorrow instead. A
+  // genuine hole with nothing done yet still fills from today, unchanged.
+  if (from === 0 && plan.sessions.some((s) => completedOn(s) === today)) {
+    from = 1;
+  }
   if (from >= practiceStartDay) return plan; // no gap to fill
 
   const chapterMinutes = computeChapterMinutes(profile);
