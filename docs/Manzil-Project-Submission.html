@@ -262,6 +262,49 @@
   }
 
   ul { margin: 2mm 0 3mm 4.5mm; }
+
+  /* ---------- CREDITS (bookends the cover) ---------- */
+  .credits {
+    background: var(--ink-wash); color: var(--paper-on-dark);
+    border-radius: 6mm; padding: 9mm 10mm;
+    break-before: page; page-break-before: always;
+    break-inside: avoid;
+  }
+  .credits .sec-title { color: var(--paper-on-dark); }
+  .credits .sec-mark { border-bottom-color: rgba(242,238,227,0.22); }
+  .credits .sec-num { color: var(--gold); }
+  .credits .sec-urdu { color: var(--green-mid); }
+  .cr-lead { font-size: 10.4pt; line-height: 1.45; color: rgba(242,238,227,0.9); margin-bottom: 5mm; }
+  .cr-lead b { color: var(--gold); font-weight: 600; }
+
+  .lab { margin-bottom: 4.6mm; break-inside: avoid; }
+  .lab-h { display: flex; align-items: baseline; gap: 3mm; margin-bottom: 2mm; }
+  .lab-n { font-size: 11.4pt; font-weight: 700; color: var(--paper-on-dark); letter-spacing: -0.2px; }
+  .lab-r {
+    font-size: 7.2pt; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase;
+    color: var(--ink-wash); background: var(--green-mid);
+    padding: 0.9mm 2.4mm; border-radius: 999px;
+  }
+  .lab-r.gold { background: var(--gold); }
+  .lab-r.soft { background: rgba(242,238,227,0.28); color: var(--paper-on-dark); }
+
+  .mdl {
+    display: flex; gap: 4mm; align-items: baseline;
+    padding: 1.7mm 0; border-top: 1px solid rgba(242,238,227,0.13);
+  }
+  .mdl-n {
+    flex: 0 0 34mm; font-size: 9.6pt; font-weight: 700; color: var(--paper-on-dark);
+  }
+  .mdl-n.hero { color: var(--gold); }
+  .mdl-d { flex: 1; font-size: 8.4pt; line-height: 1.4; color: rgba(242,238,227,0.72); }
+  .mdl-d b { color: rgba(242,238,227,0.95); font-weight: 600; }
+
+  .cr-close {
+    margin-top: 5mm; padding-top: 4mm;
+    border-top: 1px solid rgba(242,238,227,0.22);
+    font-size: 9pt; line-height: 1.5; color: rgba(242,238,227,0.82);
+  }
+  .cr-close b { color: var(--gold); font-weight: 600; }
   li { margin-bottom: 1.4mm; font-size: 9.8pt; }
 </style>
 
@@ -1097,4 +1140,96 @@
       Google Gemini · Google ML Kit · Supabase · ElevenLabs
     </div>
   </div>
+
+<!-- ============ 08. THE BENCH ============ -->
+<div class="credits">
+  <div class="sec-mark">
+    <div class="sec-num">08</div>
+    <div class="sec-title">The Bench</div>
+    <div class="sec-urdu">تعمیر</div>
+  </div>
+
+  <p class="cr-lead">
+    Manzil was not built with "an AI". It was built with <b>nine frontier models from three
+    competing laboratories</b>, assigned by strength and set against each other — because a
+    model reviewing its own output is not review.
+  </p>
+
+  <div class="lab">
+    <div class="lab-h">
+      <div class="lab-n">Anthropic · Claude</div>
+      <span class="lab-r gold">Architecture &amp; Implementation</span>
+    </div>
+    <div class="mdl">
+      <div class="mdl-n hero">Fable 5</div>
+      <div class="mdl-d">The frontier of the Claude 5 generation. Reserved for work where being
+      <b>almost right is worthless</b> — the plan engine's invariants, the two-axis AI
+      fallback, and thresholds that had to be derived rather than tuned by trial.</div>
+    </div>
+    <div class="mdl">
+      <div class="mdl-n hero">Opus 5</div>
+      <div class="mdl-d">Anthropic's most capable production model and the project's primary
+      engineer — the study algorithm, the AI resilience layer, Focus Guard's state machine,
+      and every full-codebase audit. <b>Nine commits carry its signature.</b></div>
+    </div>
+    <div class="mdl">
+      <div class="mdl-n">Opus 4.8</div>
+      <div class="mdl-d">Adversarial stress-testing and the Gemini vision pipeline — used
+      specifically to attack finished work and find what the builder had missed.</div>
+    </div>
+    <div class="mdl">
+      <div class="mdl-n">Sonnet 5</div>
+      <div class="mdl-d">High-throughput implementation and live-device debugging, including
+      the native face-detection fix that pure logic tests were structurally blind to.</div>
+    </div>
+    <div class="mdl">
+      <div class="mdl-n">Sonnet 4.6</div>
+      <div class="mdl-d">Sustained feature build-out across the cloud-backup and settings
+      surfaces.</div>
+    </div>
+  </div>
+
+  <div class="lab">
+    <div class="lab-h">
+      <div class="lab-n">Google · Gemini</div>
+      <span class="lab-r">Parallel Verification Teams</span>
+    </div>
+    <div class="mdl">
+      <div class="mdl-n hero">3.1 Pro</div>
+      <div class="mdl-d">Google's deep-reasoning tier, run as a <b>verification subagent
+      team</b> — parallel researchers checking curriculum claims against primary sources, so
+      no chapter weight rested on one model's confidence.</div>
+    </div>
+    <div class="mdl">
+      <div class="mdl-n">3.6 Flash</div>
+      <div class="mdl-d">The second verification team, cross-checking the same syllabus from
+      independent sources — agreement across two labs was the bar for accepting a fact.</div>
+    </div>
+    <div class="mdl">
+      <div class="mdl-n">3.5 Flash</div>
+      <div class="mdl-d">Also the model that <b>ships inside Manzil</b>, powering Ustaad,
+      grading and quizzes — so it was validated as both a build tool and a runtime dependency.</div>
+    </div>
+  </div>
+
+  <div class="lab">
+    <div class="lab-h">
+      <div class="lab-n">OpenAI</div>
+      <span class="lab-r soft">Independent Audit</span>
+    </div>
+    <div class="mdl">
+      <div class="mdl-n hero">5.6 Terra</div>
+      <div class="mdl-d">An <b>outside auditor</b> — a third lab with no stake in decisions the
+      other two had made, reading the codebase cold to catch what shared assumptions hid.</div>
+    </div>
+  </div>
+
+  <div class="cr-close">
+    This is why the <b>989-assertion test suite</b> exists. Every model here can write code
+    that looks correct; none can be trusted to certify its own. Real bugs — a plan engine
+    stacking three identical subjects, a race showing a false "backed up" message, a face
+    detector silently rejecting visible students — were each found by <b>one model auditing
+    another's work</b>, then proven by a test that fails without the fix.
+  </div>
+</div>
 </div>
