@@ -458,36 +458,43 @@ export function FocusCameraView({ status }: { status: FocusGuardStatus }) {
     runContours: false,
     trackingEnabled: true, // trackingId, so one person can be followed
     /**
-     * Smallest face width ML Kit will report, as a fraction of frame width.
-     * THIS IS A NATIVE FILTER: a face smaller than this is discarded inside
-     * the camera pipeline and `onFacesDetected` never fires for it at all — it
-     * is indistinguishable from no one being there.
+     * Smallest face width ML Kit will look for, as a fraction of frame width.
+     * A NATIVE SEARCH HINT, not a hard cutoff: per Google's own docs
+     * (developers.google.com/ml-kit/vision/face-detection), `setMinFaceSize()`
+     * "is not a hard limit" and "can not be used to filter out face sizes" —
+     * the detector "may find faces slightly smaller than specified." What it
+     * DOES reliably do is bias the detector toward faces at or above this
+     * size, so a face well below it becomes markedly less likely to ever
+     * reach `onFacesDetected` at all, without a documented guarantee either
+     * way at the margin.
      *
      * Was 0.15 (this wrapper library's own out-of-the-box default, stricter
      * than ML Kit's native 0.1 default — nobody had tuned it for this app).
      * Reported bug: calibration refused with "I couldn't find your face" for a
      * clearly visible, well-lit face — the exact message `no-face` produces.
-     * Root cause: propping the phone at a normal reading distance (this app's
-     * own documented use case, per `calibration.ts`'s "prop your phone" copy)
-     * commonly puts a face below 15% of frame width, so ML Kit silently
-     * dropped it before any JS code ran.
+     * Likely cause: propping the phone at a normal reading distance (this
+     * app's own documented use case, per `calibration.ts`'s "prop your phone"
+     * copy) commonly puts a face below 15% of frame width, well into the
+     * range this hint biases the detector away from.
      *
      * `calibrate()` already has its OWN, more informative distance check —
      * `config.minFaceArea` (1% of frame area) — which exists specifically to
      * tell a far-but-visible student "move closer" instead of the unhelpful
-     * "no face found". That check can only ever fire on a face this native
-     * filter let through. 0.15 width corresponds to ~2.25% area — stricter
-     * than the 1% JS threshold — so the JS "too-far" branch was UNREACHABLE
-     * on a real device; every student past a certain distance got the wrong,
-     * less actionable message no matter how well lit they were.
+     * "no face found". That check can only ever fire on a face ML Kit reports
+     * at all. 0.15 width corresponds to ~2.25% area — a stronger bias against
+     * detection than the 1% JS threshold requires — so in practice the JS
+     * "too-far" branch was rarely if ever reached on a real device; students
+     * past a certain distance likely got the wrong, less actionable message
+     * regardless of lighting.
      *
-     * 0.08 restores the intended split. It is proven, not guessed: for any
-     * face box at least as tall as it is wide (true of every face detector),
-     * area >= width^2, so width <= sqrt(area). For minFaceArea = 0.01 that
-     * bound is exactly 0.1 — 0.08 sits under it with margin, so a face
-     * reaching the 1% JS threshold is guaranteed to have already cleared this
-     * native one. If `config.minFaceArea` in `types.ts` ever changes, this
-     * value must stay below sqrt(minFaceArea) or the same bug returns.
+     * 0.08 restores the intended split, and is directionally sound even
+     * without a hard vendor guarantee: for any face box at least as tall as
+     * it is wide (true of every face detector), area >= width^2, so
+     * width <= sqrt(area). For minFaceArea = 0.01 that bound is exactly 0.1 —
+     * 0.08 sits under it with margin, so a face whose reported area reaches
+     * the 1% JS threshold was very unlikely to have been the one this native
+     * hint biased away. If `config.minFaceArea` in `types.ts` ever changes,
+     * this value should stay below sqrt(minFaceArea) to preserve that margin.
      */
     minFaceSize: 0.08,
     cameraFacing: 'front',

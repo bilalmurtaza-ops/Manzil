@@ -553,6 +553,94 @@ section('16. Every posture calibrates — desk, bed, floor, charpai');
 }
 
 // ===========================================================================
+section('16b. Large/close faces impose no implicit ceiling');
+// ===========================================================================
+{
+  /**
+   * Every faceArea value used everywhere else in this suite sits in 0.05-0.08
+   * — a normal, book-propped reading distance. Nothing here ever exercised a
+   * student leaning in close, holding the phone near, or a face that simply
+   * fills more of the frame. `calibrate()`'s only faceArea gate is a LOWER
+   * bound (calibration.ts) and `classifyInstant()` never re-checks faceArea
+   * once past that floor (stateMachine.ts) — so in principle nothing in this
+   * app's OWN logic should reject a large face. This section proves that
+   * rather than asserting it from reading the source: a big/close face is
+   * exactly as valid a "focused" reading as a small/far one, all the way up
+   * to filling most of the frame.
+   *
+   * What this section CANNOT prove: ML Kit's own black-box behavior at these
+   * sizes. Google documents no maximum face size and no practitioner report
+   * of a large-face failure was found, but that is a real-device question
+   * this pure-function suite has no way to answer — see CLAUDE.md's "not yet
+   * verified" line.
+   */
+  const sizes = [0.08, 0.15, 0.3, 0.5, 0.7];
+
+  for (const fa of sizes) {
+    const samples = trace([{ seconds: 5, sample: withJitter({ ...READING, faceArea: fa }) }]);
+    const r = calibrate(samples, CFG);
+    check(`faceArea ${fa}: calibrates successfully`, r.ok, r.ok ? 'ok' : r.reason);
+    if (r.ok) {
+      check(
+        `faceArea ${fa}: recovered baseline tracks the input size`,
+        Math.abs(r.baseline.faceArea - fa) < 0.001,
+        `${r.baseline.faceArea}`,
+      );
+    }
+  }
+
+  for (const fa of sizes) {
+    const baseline: FocusBaseline = { ...BOOK_BASELINE, faceArea: fa };
+    const reading: Omit<FocusSample, 't'> = { ...READING, faceArea: fa };
+    const { report } = runTrace(
+      trace([{ seconds: 120, sample: withJitter(reading) }]),
+      baseline,
+      CFG,
+    );
+    check(
+      `faceArea ${fa}: scores as focus over a full session`,
+      (report.score ?? 0) > 0.97,
+      pct(report.score ?? 0),
+    );
+    check(`faceArea ${fa}: no false distraction`, report.distractedMs === 0);
+    check(`faceArea ${fa}: no false away`, report.awayMs === 0);
+  }
+
+  // The realistic trigger for a large faceArea: the student leans in close
+  // mid-session (checking something, adjusting the phone) while staying
+  // aligned with their own baseline posture. Size alone must never look like
+  // deviation — classifyInstant does not re-examine faceArea past the initial
+  // floor check, so this proves that boundary holds under a real transition,
+  // not just a static trace.
+  {
+    const samples = trace([
+      { seconds: 60, sample: withJitter(READING) },
+      { seconds: 30, sample: withJitter({ ...READING, faceArea: 0.5 }) },
+      { seconds: 60, sample: withJitter(READING) },
+    ]);
+    const { report } = runTrace(samples, BOOK_BASELINE, CFG);
+    check(
+      'leaning in close (faceArea jumps to 0.5) is not classified as distraction',
+      report.distractedMs === 0,
+      `${Math.round(report.distractedMs / 1000)}s`,
+    );
+    check('leaning in close still counts as focus', (report.score ?? 0) > 0.97, pct(report.score ?? 0));
+  }
+
+  /**
+   * Face SHAPE (long/narrow vs round/wide) is a different question from size,
+   * and this app cannot answer it: `FocusSample.faceArea` is a scalar area
+   * ratio with no width/height split, so an elongated face and a round face
+   * of equal area are indistinguishable to every check in this codebase. This
+   * is a known, accepted limitation, not a gap being silently left untested —
+   * real human face aspect-ratio variance is bounded, and adding width/height
+   * tracking would be a schema change across the native interface,
+   * calibration, the state machine and this whole suite for a marginal
+   * benefit. Deliberately not attempted.
+   */
+}
+
+// ===========================================================================
 section('17. Attention-span advice fed back to the plan engine');
 // ===========================================================================
 {

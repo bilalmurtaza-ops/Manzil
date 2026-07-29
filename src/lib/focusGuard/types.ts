@@ -147,14 +147,20 @@ export interface FocusConfig {
    * Faces smaller than this fraction of frame AREA are too far away to judge.
    *
    * LOAD-BEARING CROSS-FILE INVARIANT: `camera.native.tsx`'s native
-   * `minFaceSize` (a WIDTH fraction, ML Kit's own pre-filter) must stay at or
-   * below `sqrt(minFaceArea)`, proven from area >= width^2 for any face box at
-   * least as tall as it is wide. If it doesn't, ML Kit silently discards a
-   * face before this JS check ever sees it, and the app reports the wrong,
-   * less actionable "no face found" instead of "move closer" — exactly the
-   * bug that shipped when the native default (0.15, ~2.25% area) was left
-   * stricter than this 1% area threshold. Raising `minFaceArea` without also
-   * lowering the native value reopens that gap.
+   * `minFaceSize` (a WIDTH fraction — ML Kit's own search hint, not a
+   * documented hard filter, per Google's docs) should stay at or below
+   * `sqrt(minFaceArea)`. The geometry behind that bound IS proven — for any
+   * face box at least as tall as it is wide, area >= width^2 — so this stays
+   * the correct, conservative design rule to follow even though whether ML
+   * Kit strictly enforces its own threshold is not itself guaranteed:
+   * treating it as if it were a hard filter is the safe assumption, and if
+   * ML Kit is in fact softer than that in practice, this rule only ends up
+   * doing better than required, never worse. Ignoring it risks the bug that
+   * shipped when the native default (0.15, ~2.25% area) was left stricter
+   * than this 1% area threshold: a face below that size became markedly less
+   * likely to reach JS at all, so the app reported the wrong, less actionable
+   * "no face found" instead of "move closer". Raising `minFaceArea` without
+   * also lowering the native value reopens that gap.
    */
   minFaceArea: number;
 
