@@ -270,6 +270,24 @@ export default function CloudScreen() {
       setNotice('Backed up. This device will now keep your cloud copy up to date automatically.');
       await refreshRemote();
     } catch (e) {
+      // Mirrors backupScheduler.ts's requestBackup(), which is the ONLY other
+      // place in the app that pushes a backup. Without this, a 'conflict'
+      // failure here (this device doesn't know the cloud copy's rev — e.g.
+      // after sign-out/sign-in, a reinstall, or a new device — and the insert
+      // collides with the row that already exists) never flips `conflict` in
+      // the store, so the "Overwrite cloud" button (gated on `conflict`) never
+      // appears and this exact button just fails identically forever. Recording
+      // it here reconnects the already-built, already-correct resolution flow.
+      if (e instanceof BackupError) {
+        useCloudStore.getState().recordFailure({
+          kind: e.kind,
+          message: e.message,
+          at: new Date().toISOString(),
+        });
+        // Refresh so the eventual overwrite/restore confirm dialog describes
+        // the cloud copy accurately, not whatever was fetched at mount time.
+        if (e.kind === 'conflict') void refreshRemote();
+      }
       show(e);
     } finally {
       setBusy(false);
