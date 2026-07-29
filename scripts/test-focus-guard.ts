@@ -165,6 +165,21 @@ section('1. Calibration');
   const rn = calibrate(noFace, CFG);
   check('no face refuses to calibrate', !rn.ok && rn.reason === 'no-face', !rn.ok ? rn.reason : 'ok');
 
+  /**
+   * This test operates on FocusSample data — downstream of ML Kit's own native
+   * pre-filter, which this suite has NO visibility into (it never loads a
+   * native module). It proved nothing about real devices until 2026, when
+   * `camera.native.tsx`'s native `minFaceSize` (0.15, ~2.25% area) was found
+   * stricter than the `too-far` threshold this test exercises (1% area): ML
+   * Kit was silently discarding exactly the faces this test simulates before
+   * `calibrate()` ever ran, so 'too-far' was reachable here and UNREACHABLE on
+   * a phone — reported as a real device bug ("clear, lit face -> no-face
+   * error") this suite was structurally blind to. Fixed by lowering the native
+   * threshold below the provable `sqrt(minFaceArea)` bound — see the
+   * cross-file invariant comment on `minFaceArea` in `types.ts`. Kept in mind:
+   * a green run here is necessary, never sufficient, for anything gated by a
+   * native SDK parameter.
+   */
   const far = trace([{ seconds: 5, sample: { ...READING, faceArea: 0.002 } }]);
   const rf = calibrate(far, CFG);
   check('a face too far away refuses', !rf.ok && rf.reason === 'too-far', !rf.ok ? rf.reason : 'ok');

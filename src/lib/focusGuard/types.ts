@@ -143,7 +143,19 @@ export interface FocusConfig {
    * and now only has to separate a true blackout from an empty lit room.
    */
   minLuma: number;
-  /** Faces smaller than this fraction of frame are too far away to judge. */
+  /**
+   * Faces smaller than this fraction of frame AREA are too far away to judge.
+   *
+   * LOAD-BEARING CROSS-FILE INVARIANT: `camera.native.tsx`'s native
+   * `minFaceSize` (a WIDTH fraction, ML Kit's own pre-filter) must stay at or
+   * below `sqrt(minFaceArea)`, proven from area >= width^2 for any face box at
+   * least as tall as it is wide. If it doesn't, ML Kit silently discards a
+   * face before this JS check ever sees it, and the app reports the wrong,
+   * less actionable "no face found" instead of "move closer" — exactly the
+   * bug that shipped when the native default (0.15, ~2.25% area) was left
+   * stricter than this 1% area threshold. Raising `minFaceArea` without also
+   * lowering the native value reopens that gap.
+   */
   minFaceArea: number;
 
   /** Disables drowsiness detection entirely, for memorisation-heavy revision. */
