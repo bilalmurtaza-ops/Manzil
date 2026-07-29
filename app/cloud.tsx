@@ -602,6 +602,15 @@ export default function CloudScreen() {
                       <Text style={styles.infoLabel}>Automatic backup</Text>
                       <Text style={styles.infoValue}>{autoBackup === 'armed' ? 'On' : 'Off'}</Text>
                     </View>
+                    {/* The row above reports the state; this acts on it. Without
+                        a control here, a device disarmed by an auth error or a
+                        conflict had no route back to 'On' anywhere in the app —
+                        automatic backup silently stayed dead for good. */}
+                    {autoBackup === 'armed'
+                      ? secondary('Turn automatic backup off', () =>
+                          disarm('user turned automatic backup off'),
+                        )
+                      : secondary('Turn automatic backup on', () => armDevice('user-enabled'))}
                   </View>
 
                   {!checkedRemote && (

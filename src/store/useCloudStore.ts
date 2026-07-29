@@ -34,7 +34,9 @@ interface CloudState {
   session: { userId: string; email: string } | null;
   /**
    * Whether this device may upload automatically. Starts 'off' and is only ever
-   * flipped by armDevice(), which is called from exactly two confirmed actions.
+   * flipped by armDevice(), which is called from deliberate, student-initiated
+   * actions only: backing up, restoring, or turning the Settings switch on.
+   * Never as a side effect of signing in — see the trap-1 walls in cloudBackup.
    */
   autoBackup: AutoBackupMode;
   lastBackupAt: string | null;
@@ -58,7 +60,7 @@ interface CloudState {
 
   // ---- actions ----
   setSession: (session: { userId: string; email: string } | null) => void;
-  armDevice: (reason: 'user-backed-up' | 'user-restored') => void;
+  armDevice: (reason: 'user-backed-up' | 'user-restored' | 'user-enabled') => void;
   disarm: (reason: string) => void;
   setStatus: (status: CloudStatus) => void;
   setRemoteMeta: (meta: RemoteMeta | null) => void;

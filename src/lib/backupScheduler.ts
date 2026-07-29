@@ -20,7 +20,48 @@ const MIN_INTERVAL_MS = 5 * 60_000;
 const BACKOFF_BASE_MS = 30_000;
 const BACKOFF_MAX_MS = 30 * 60_000;
 
-type Reason = 'idle' | 'background' | 'foreground-retry' | 'manual' | 'armed';
+/**
+ * Heartbeat while the app is open. The scheduler was purely REACTIVE before
+ * this — it uploaded on a store change or on backgrounding, and nothing else.
+ * Two holes followed: data changed while an upload was already in flight (or
+ * during backoff) could sit unsent indefinitely, and a process killed by
+ * Android without a clean background transition left the change stranded until
+ * the student happened to edit something else.
+ *
+ * Only fires when there is genuinely something to send, so an idle app costs
+ * nothing. 30 minutes is well inside a study session and far under the once-a-
+ * day expectation, without turning an 80 KB payload into chatter.
+ */
+const PERIODIC_MS = 30 * 60_000;
+
+/**
+ * Grace period after launch before the catch-up attempt, so hydration and the
+ * first render settle first. Backup must never compete with the app becoming
+ * usable.
+ */
+const LAUNCH_CATCHUP_MS = 20_000;
+
+/**
+ * Minimum gap between MANUAL uploads.
+ *
+ * Manual deliberately bypasses every automatic guard so a student always gets a
+ * real attempt and a real error — which also means one tap is one full upload
+ * and one server-side `rev` bump. Without a floor, holding the button spends
+ * free-tier writes and inflates `rev` for nothing. Short enough to be invisible
+ * to honest use: it only ever blocks a second tap seconds after the first.
+ */
+const MANUAL_MIN_INTERVAL_MS = 60_000;
+
+type Reason =
+  | 'idle'
+  | 'background'
+  | 'foreground-retry'
+  | 'manual'
+  | 'armed'
+  /** Heartbeat tick while the app is open. */
+  | 'periodic'
+  /** One catch-up shortly after launch, for changes stranded by a killed process. */
+  | 'launch';
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let inFlight: Promise<void> | null = null;
@@ -35,9 +76,23 @@ let inFlight: Promise<void> | null = null;
  */
 let inFlightWantsThrow = false;
 let lastAttemptAt = 0;
+/** When a manual upload last actually STARTED — drives the anti-spam floor. */
+let lastManualAt = 0;
 let unsubscribeStore: (() => void) | null = null;
 let appStateSub: { remove: () => void } | null = null;
+let periodicTimer: ReturnType<typeof setInterval> | null = null;
+let launchTimer: ReturnType<typeof setTimeout> | null = null;
 let started = false;
+
+/**
+ * Milliseconds until "Back up now" may be tapped again, 0 when it is free.
+ * Exported so the button can disable itself and count down, rather than the
+ * student tapping into an error.
+ */
+export function manualCooldownRemainingMs(): number {
+  if (lastManualAt === 0) return 0;
+  return Math.max(0, MANUAL_MIN_INTERVAL_MS - (Date.now() - lastManualAt));
+}
 
 function envelopeMeta() {
   const { deviceId } = useCloudStore.getState();
@@ -83,7 +138,11 @@ function canAutoAttempt(reason: Reason): boolean {
   if (s.conflict) return false;
   if (s.status !== 'idle') return false;
   if (backoffRemainingMs() > 0) return false;
-  if (reason !== 'background' && Date.now() - lastAttemptAt < MIN_INTERVAL_MS) return false;
+  // The 5-minute floor exists to stop a burst of store writes becoming a burst
+  // of uploads. Reasons that are already self-spaced, or that are the last
+  // chance to save the data at all, are exempt.
+  const selfSpaced = reason === 'background' || reason === 'periodic' || reason === 'launch';
+  if (!selfSpaced && Date.now() - lastAttemptAt < MIN_INTERVAL_MS) return false;
   return true;
 }
 
@@ -108,6 +167,22 @@ export function requestBackup(reason: Reason): Promise<void> {
     return Promise.resolve();
   }
   if (!manual && !isDirty()) return Promise.resolve();
+
+  if (manual) {
+    // Anti-spam floor. Rejected BEFORE any store mutation or network call, so a
+    // blocked tap leaves no trace in the error state — it is not a backup
+    // failure, and must not show up as one in the status line or trip backoff.
+    const wait = manualCooldownRemainingMs();
+    if (wait > 0) {
+      return Promise.reject(
+        new BackupError(
+          `Just backed up. You can back up again in ${Math.ceil(wait / 1000)}s.`,
+          'rate-limit',
+        ),
+      );
+    }
+    lastManualAt = Date.now();
+  }
 
   clearDebounce();
   lastAttemptAt = Date.now();
@@ -206,6 +281,31 @@ export function startBackupScheduler(): void {
     });
 
     appStateSub = AppState.addEventListener('change', handleAppStateChange);
+
+    // Catch-up: a process Android killed without a clean background transition
+    // leaves its last change unsent, and nothing else here would notice until
+    // the student happened to edit something new. Delayed so it never competes
+    // with hydration or first paint.
+    launchTimer = setTimeout(() => {
+      launchTimer = null;
+      try {
+        if (isDirty()) void requestBackup('launch').catch(() => {});
+      } catch {
+        // Never let the catch-up throw into the app.
+      }
+    }, LAUNCH_CATCHUP_MS);
+
+    // Heartbeat: uploads only when there is something outstanding, so an idle
+    // app is free. This is what makes "it backs itself up" true even if the
+    // student never leaves the app and the store subscription's debounce was
+    // skipped (upload in flight, backoff, or the 5-minute floor).
+    periodicTimer = setInterval(() => {
+      try {
+        if (isDirty()) void requestBackup('periodic').catch(() => {});
+      } catch {
+        // Same.
+      }
+    }, PERIODIC_MS);
   } catch {
     started = false;
   }
@@ -216,11 +316,15 @@ export function stopBackupScheduler(): void {
   try {
     unsubscribeStore?.();
     appStateSub?.remove();
+    if (periodicTimer) clearInterval(periodicTimer);
+    if (launchTimer) clearTimeout(launchTimer);
   } catch {
     // Best effort.
   }
   unsubscribeStore = null;
   appStateSub = null;
+  periodicTimer = null;
+  launchTimer = null;
   started = false;
 }
 

@@ -26,7 +26,7 @@ import {
   undoSnapshotExists,
 } from '../src/lib/backupRestore';
 import { parseBackup, summarize } from '../src/lib/backupSchema';
-import { requestBackup } from '../src/lib/backupScheduler';
+import { manualCooldownRemainingMs, requestBackup } from '../src/lib/backupScheduler';
 import { BackupError } from '../src/lib/cloudBackup';
 import { VoicePicker } from '../src/components/VoicePicker';
 import { isSupported as isFocusGuardSupported } from '../src/lib/focusGuard/camera';
@@ -79,9 +79,12 @@ export default function SettingsScreen() {
   const cloudDeviceId = useCloudStore((s) => s.deviceId);
   const undoAvailableAt = useCloudStore((s) => s.undoAvailableAt);
   const disarmCloud = useCloudStore((s) => s.disarm);
+  const armCloud = useCloudStore((s) => s.armDevice);
 
   const [backupNotice, setBackupNotice] = useState<string | null>(null);
   const [backupError, setBackupError] = useState<string | null>(null);
+  /** Remaining ms on the manual-backup floor; drives the disabled countdown. */
+  const [manualWait, setManualWait] = useState(0);
   const [fileBusy, setFileBusy] = useState(false);
   const [undoPresent, setUndoPresent] = useState(false);
 
@@ -98,6 +101,22 @@ export default function SettingsScreen() {
       alive = false;
     };
   }, [undoAvailableAt]);
+
+  /**
+   * Tick the manual-backup countdown once a second, and only while one is
+   * running — no always-on timer on a settings screen. Seeded on mount too, so
+   * re-entering Settings during a cooldown still shows the correct wait instead
+   * of offering a button that would immediately refuse.
+   */
+  useEffect(() => {
+    setManualWait(manualCooldownRemainingMs());
+    const id = setInterval(() => {
+      const left = manualCooldownRemainingMs();
+      setManualWait(left);
+      if (left === 0) clearInterval(id);
+    }, 1000);
+    return () => clearInterval(id);
+  }, [backupNotice, backupError]);
 
   const flashBackup = (msg: string) => {
     setBackupError(null);
@@ -308,7 +327,25 @@ export default function SettingsScreen() {
       flashBackup('Backed up to the cloud.');
     } catch (e) {
       failBackup(e);
+    } finally {
+      // Start the countdown immediately, whatever the outcome — the upload was
+      // attempted either way, and a failed attempt costs the same server write.
+      setManualWait(manualCooldownRemainingMs());
     }
+  };
+
+  /**
+   * Turning automatic backup on is a deliberate, student-initiated act, which is
+   * exactly what `armDevice` is for — the same gate a backup or a restore goes
+   * through. It is safe from this screen because the trap-1 walls live below it,
+   * not here: `pushBackup` still refuses without a profile, and every upload
+   * still carries `expectedRev`, so a stale device gets a conflict rather than
+   * overwriting a newer cloud copy.
+   */
+  const handleToggleAutoBackup = () => {
+    triggerHapticIfEnabled();
+    if (cloudAuto === 'armed') disarmCloud('user turned automatic backup off');
+    else armCloud('user-enabled');
   };
 
   const handleExportFile = async () => {
@@ -813,9 +850,33 @@ export default function SettingsScreen() {
                   <Text style={styles.infoLabel}>Account</Text>
                   <Text style={styles.infoValue}>{cloudSession.email}</Text>
                 </View>
-                <View style={[styles.infoRow, { borderBottomWidth: 0 }]}>
-                  <Text style={styles.infoLabel}>Automatic backup</Text>
-                  <Text style={styles.infoValue}>{cloudAuto === 'armed' ? 'On' : 'Off'}</Text>
+                {/* A real switch, not a label. This row used to be read-only —
+                    it reported 'On'/'Off' with no way to change it, and the only
+                    thing that could ever set it was a backup or restore made
+                    from the Manage screen. A student who saw "Off" had no route
+                    back to "On" anywhere in the app. */}
+                <View style={[styles.settingRow, { borderBottomWidth: 0 }]}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.settingTitle}>Automatic backup</Text>
+                    <Text style={styles.settingSub}>
+                      Saves your progress on its own — shortly after you study, when you
+                      close the app, and every half hour it finds something new.
+                    </Text>
+                  </View>
+                  <Pressable
+                    style={[
+                      styles.toggleTrack,
+                      cloudAuto === 'armed' ? styles.toggleTrackOn : styles.toggleTrackOff,
+                    ]}
+                    onPress={handleToggleAutoBackup}
+                  >
+                    <View
+                      style={[
+                        styles.toggleThumb,
+                        cloudAuto === 'armed' ? styles.toggleThumbOn : styles.toggleThumbOff,
+                      ]}
+                    />
+                  </Pressable>
                 </View>
               </>
             )}
@@ -841,9 +902,26 @@ export default function SettingsScreen() {
 
             {cloudConfigured && (
               <>
-                {cloudSession && cloudAuto === 'armed' && !cloudConflict && (
-                  <Pressable style={styles.actionRowBtn} onPress={() => void handleBackupNow()}>
-                    <Text style={styles.actionRowText}>↑ Back up now</Text>
+                {/* Shown whenever there is a session and no conflict to resolve.
+                    It used to also require `cloudAuto === 'armed'` — but any auth
+                    or conflict failure disarms the device, so the one control
+                    that could push the latest data vanished at exactly the
+                    moment the student needed it, with no way to get it back. A
+                    conflict still routes to Manage, where both copies are shown
+                    before anything is overwritten. */}
+                {cloudSession && !cloudConflict && (
+                  <Pressable
+                    style={[styles.actionRowBtn, manualWait > 0 && styles.actionRowBtnDisabled]}
+                    disabled={manualWait > 0}
+                    onPress={() => void handleBackupNow()}
+                  >
+                    <Text
+                      style={[styles.actionRowText, manualWait > 0 && styles.actionRowTextDisabled]}
+                    >
+                      {manualWait > 0
+                        ? `↑ Back up now · wait ${Math.ceil(manualWait / 1000)}s`
+                        : '↑ Back up now'}
+                    </Text>
                   </Pressable>
                 )}
                 <Pressable style={styles.actionRowBtn} onPress={() => router.push('/cloud')}>
@@ -1179,6 +1257,8 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm,
   },
   actionRowText: { fontFamily: font.semibold, fontSize: 13, color: color.greenDeep },
+  actionRowBtnDisabled: { opacity: 0.5 },
+  actionRowTextDisabled: { color: color.inkSoft },
 
   noticeBox: {
     marginBottom: space.sm,
