@@ -1,0 +1,22 @@
+{
+  "name": "manzil-video",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Programmatic 60s film for Manzil, rendered from the app's own design tokens.",
+  "scripts": {
+    "studio": "remotion studio",
+    "render": "remotion render Manzil out/Manzil.mp4 --codec=h264",
+    "render4k": "remotion render Manzil out/Manzil-4K.mp4 --codec=h264 --scale=2",
+    "still": "remotion still Manzil out/frame.png"
+  },
+  "dependencies": {
+    "@remotion/cli": "^4.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "remotion": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "typescript": "^5.5.0"
+  }
+}
