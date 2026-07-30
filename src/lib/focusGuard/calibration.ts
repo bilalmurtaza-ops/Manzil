@@ -17,8 +17,15 @@ import type { FocusBaseline, FocusConfig, FocusSample } from './types';
  */
 
 export const CALIBRATION_MS = 5000;
-/** Roughly half of a 5s window at ~3 samples/sec. */
-const MIN_VALID_SAMPLES = 8;
+/**
+ * Minimum frames with a valid face needed to compute a reliable baseline.
+ * At ~3 samples/sec over 5 seconds the window has ~16 frames. 5 (~31%) gives
+ * ML Kit breathing room during its first second of model warm-up — the detector
+ * is now created once and kept alive, but on a cold launch the first few frames
+ * may still return empty while the model loads. The other quality gates
+ * (MAX_SPREAD_DEG, minFaceArea) still enforce baseline quality.
+ */
+const MIN_VALID_SAMPLES = 5;
 /** If their head moved more than this while "reading normally", it isn't a baseline. */
 const MAX_SPREAD_DEG = 20;
 
