@@ -827,6 +827,50 @@ section('18. Voice cues — speak only where the screen cannot be read');
     const cal = nextCue({ ...base, prevPhase: 'idle', phase: 'calibrating', now: 2000 }, mem);
     check('calibration bypasses the cooldown', cal?.cue.id === 'calibration-start');
   }
+  {
+    // THE BUG THIS CATCHES: calibration-ok used to write `lastSpokeAt`, starting
+    // the 2-minute cooldown clock. Every live cue that fired within 2 minutes of
+    // calibration finishing — i.e. every test and most real sessions — was
+    // silently suppressed. The fix: cooldown-bypassing cues no longer write
+    // `lastSpokeAt`, so they cannot poison the live-tracking window.
+    let mem = initCueMemory();
+    // Calibration starts at t=1000.
+    const calStart = nextCue(
+      { ...base, prevPhase: 'idle', phase: 'calibrating', now: 1000 },
+      mem,
+    );
+    check('cal-start plays', calStart?.cue.id === 'calibration-start');
+    if (calStart) mem = calStart.memory;
+    check('cal-start does not set lastSpokeAt', mem.lastSpokeAt === null);
+
+    // Calibration succeeds at t=6000 (5s later).
+    const calOk = nextCue(
+      { ...base, prevPhase: 'calibrating', phase: 'running', now: 6000 },
+      mem,
+    );
+    check('cal-ok plays', calOk?.cue.id === 'calibration-ok');
+    if (calOk) mem = calOk.memory;
+    check('cal-ok does not set lastSpokeAt', mem.lastSpokeAt === null);
+
+    // Student walks away at t=10000, only 4s after calibration-ok.
+    // Before the fix this was SILENTLY SUPPRESSED.
+    const away = nextCue(
+      { ...base, prevState: 'focused', state: 'away', now: 10_000 },
+      mem,
+    );
+    check('away cue is NOT suppressed by calibration cooldown', away?.cue.id === 'away');
+    if (away) mem = away.memory;
+
+    // Now lastSpokeAt IS set, because 'away' is a live cue.
+    check('away DOES set lastSpokeAt', mem.lastSpokeAt === 10_000);
+
+    // A second live cue within 2 minutes IS suppressed (existing behaviour).
+    const returnSoon = nextCue(
+      { ...base, prevState: 'away', state: 'focused', now: 15_000 },
+      mem,
+    );
+    check('return 5s after away is still suppressed by live cooldown', returnSoon === null);
+  }
 
   // --- variants never repeat back to back
   {

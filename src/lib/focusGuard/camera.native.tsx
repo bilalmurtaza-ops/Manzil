@@ -394,7 +394,7 @@ export function useFocusGuard(opts: UseFocusGuardOptions): FocusGuardStatus {
         distractedSince.current = null;
       }
     },
-    [active, opts.paused, config, luma],
+    [active, opts.paused, config, luma, emitCue],
   );
 
   const onError = useCallback((e: Error) => {

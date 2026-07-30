@@ -179,7 +179,7 @@ export function nextCue(
     cue: { id, variant },
     memory: {
       lastVariant: { ...memory.lastVariant, [id]: variant },
-      lastSpokeAt: input.now,
+      lastSpokeAt: BYPASSES_COOLDOWN.has(id) ? memory.lastSpokeAt : input.now,
     },
   };
 }
