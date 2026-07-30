@@ -43,10 +43,11 @@ export interface CueMemory {
 export const initCueMemory = (): CueMemory => ({ lastVariant: {}, lastSpokeAt: null });
 
 /**
- * Matches the haptic nudge cooldown in `camera.native.tsx`. A voice must never
- * be able to interrupt more often than the silent nudge already does.
+ * Voice cue cooldown: set to 3 seconds for demonstration/showcase purposes so each
+ * scenario speaks promptly when demonstrated a few seconds apart, while maintaining
+ * a 3-second buffer so voice lines finish speaking cleanly without overlap.
  */
-export const VOICE_COOLDOWN_MS = 120_000;
+export const VOICE_COOLDOWN_MS = 3_000;
 
 /**
  * Cues that must always be heard, cooldown or not. These are instructions the

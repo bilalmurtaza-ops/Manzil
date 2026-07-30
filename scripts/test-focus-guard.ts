@@ -810,8 +810,8 @@ section('18. Voice cues — speak only where the screen cannot be read');
     const first = nextCue({ ...base, prevState: 'focused', state: 'away', now: 10_000 }, mem);
     check('the first cue of a session always plays', first !== null);
     if (first) mem = first.memory;
-    const soon = nextCue({ ...base, prevState: 'away', state: 'focused', now: 20_000 }, mem);
-    check('a second cue 10s later is suppressed', soon === null);
+    const soon = nextCue({ ...base, prevState: 'away', state: 'focused', now: 11_000 }, mem);
+    check('a second cue 1s later is suppressed', soon === null);
     const later = nextCue(
       { ...base, prevState: 'away', state: 'focused', now: 10_000 + VOICE_COOLDOWN_MS + 1 },
       mem,
@@ -864,12 +864,12 @@ section('18. Voice cues — speak only where the screen cannot be read');
     // Now lastSpokeAt IS set, because 'away' is a live cue.
     check('away DOES set lastSpokeAt', mem.lastSpokeAt === 10_000);
 
-    // A second live cue within 2 minutes IS suppressed (existing behaviour).
+    // A second live cue within 3 seconds IS suppressed (existing behaviour).
     const returnSoon = nextCue(
-      { ...base, prevState: 'away', state: 'focused', now: 15_000 },
+      { ...base, prevState: 'away', state: 'focused', now: 11_000 },
       mem,
     );
-    check('return 5s after away is still suppressed by live cooldown', returnSoon === null);
+    check('return 1s after away is still suppressed by live cooldown', returnSoon === null);
   }
 
   // --- variants never repeat back to back
